@@ -1,0 +1,11 @@
+{
+	"id": "s3sync",
+	"name": "S3Sync",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Synchronize your vault to an AWS S3 bucket.",
+	"author": "Oskari Pöntinen",
+	"authorUrl": "https://devosku.com",
+	"fundingUrl": "https://obsidian.md/pricing",
+	"isDesktopOnly": false
+}

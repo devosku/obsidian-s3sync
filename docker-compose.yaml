@@ -1,0 +1,25 @@
+services:
+  localstack:
+    container_name: "obsidian-s3sync-localstack"
+    image: localstack/localstack
+    expose:
+      - "4566:4566"            # LocalStack Gateway
+      - "4510-4559:4510-4559"  # external services port range
+    environment:
+      # LocalStack configuration: https://docs.localstack.cloud/references/configuration/
+      - DEBUG=${DEBUG:-0}
+      - SERVICES=s3
+      - LOCALSTACK_HOST=localstack
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+  
+  testrunner:
+    container_name: "obsidian-s3sync-testrunner"
+    image: node:22
+    working_dir: /app
+    volumes:
+      - "./:/app"
+    depends_on:
+      localstack:
+        condition: service_healthy
+    command: sleep infinity
