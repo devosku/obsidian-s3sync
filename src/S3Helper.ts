@@ -4,11 +4,14 @@ import {
 	ListObjectsV2Command,
 	DeleteObjectCommand,
 	GetObjectCommand,
+	HeadObjectCommand,
 } from "@aws-sdk/client-s3";
 import { createReadStream, createWriteStream } from "fs";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
 import { FileModel } from "./types";
+import { mkdir, utimes } from "fs/promises";
+import { dirname } from "path";
 
 interface S3HelperOptions {
 	region: string;
@@ -20,7 +23,7 @@ interface S3HelperOptions {
 
 export interface ObjectInfo {
 	key: string;
-	lastModified?: number;
+	lastModified: number;
 	hash: string;
 }
 
@@ -44,10 +47,8 @@ export default class S3Helper {
 		this.bucket = options.bucket;
 	}
 
-	async listObjects() {
-		const objects: FileModel[] = [];
+	async *listObjects() {
 		let continuationToken: string | undefined;
-
 		do {
 			const { Contents, NextContinuationToken } = await this.client.send(
 				new ListObjectsV2Command({
@@ -57,25 +58,26 @@ export default class S3Helper {
 			);
 			continuationToken = NextContinuationToken;
 			if (Contents) {
-				objects.push(
-					...Contents.map((item) => ({
+				for (const item of Contents) {
+					const file: FileModel = {
 						path: item.Key || "",
 						mtime: item.LastModified
-							? Math.floor(item.LastModified.getTime() / 1000)
-							: -1,
-						hash: item.ETag || "",
+							? item.LastModified.getTime()
+							: 0,
+						hash: item.ETag ? JSON.parse(item.ETag) : "",
 						remote: true,
-					}))
-				);
+					};
+					yield file;
+				}
 			}
 		} while (continuationToken);
-
-		return objects;
 	}
 
 	async downloadObject(key: string, filePath: string) {
+		const dirPath = dirname(filePath);
+		await mkdir(dirPath, { recursive: true });
 		const fileStream = createWriteStream(filePath);
-		const { Body } = await this.client.send(
+		const { Body, LastModified } = await this.client.send(
 			new GetObjectCommand({
 				Bucket: this.bucket,
 				Key: key,
@@ -85,7 +87,22 @@ export default class S3Helper {
 			throw new Error(`Object not found: ${key}`);
 		}
 		await pipeline(Body as Readable, fileStream);
-		console.log(`Downloaded: ${key} -> ${filePath}`);
+		await utimes(filePath, LastModified || 0, LastModified || 0);
+	}
+
+	async getObjectInfo(key: string): Promise<ObjectInfo> {
+		const head = await this.client.send(
+			new HeadObjectCommand({
+				Bucket: this.bucket,
+				Key: key,
+			})
+		);
+
+		return {
+			key: key,
+			lastModified: head.LastModified ? head.LastModified.getTime() : 0,
+			hash: head.ETag ? JSON.parse(head.ETag) : "",
+		};
 	}
 
 	async uploadObject(
@@ -102,7 +119,12 @@ export default class S3Helper {
 				Metadata: metadata,
 			})
 		);
-		console.log(`Uploaded: ${filePath} -> ${key}`);
+		const objectInfo = await this.getObjectInfo(key);
+		await utimes(
+			filePath,
+			new Date(objectInfo.lastModified),
+			new Date(objectInfo.lastModified)
+		);
 	}
 
 	async deleteObject(key: string) {
@@ -112,6 +134,5 @@ export default class S3Helper {
 				Key: key,
 			})
 		);
-		console.log(`Deleted: ${key}`);
 	}
 }

@@ -3,11 +3,11 @@ import {
 	DeleteBucketCommand,
 	DeleteObjectCommand,
 	ListObjectsV2Command,
-	PutObjectCommand,
 	S3Client,
 } from "@aws-sdk/client-s3";
-import { createReadStream, existsSync, mkdirSync, readdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { join, relative } from "path";
+import S3Helper from "../src/S3Helper";
 
 // Connection settings for localstack S3 bucket running in a docker container
 export const REGION = "us-east-1";
@@ -25,6 +25,16 @@ const client = new S3Client({
 	forcePathStyle: true,
 });
 
+export function getTestS3Helper(bucket: string) {
+	return new S3Helper({
+		endpoint: ENDPOINT,
+		region: REGION,
+		accessKeyId: ACCESS_KEY_ID,
+		secretAccessKey: SECRET_ACCESS_KEY,
+		bucket: bucket,
+	});
+}
+
 export async function createBucket(bucket: string) {
 	await client.send(new CreateBucketCommand({ Bucket: bucket }));
 }
@@ -41,14 +51,6 @@ export async function deleteAllObjects(bucket: string) {
 		}
 		await deleteObject(bucket, object.Key);
 	}
-}
-
-export async function uploadObject(bucket: string, key: string, file: string) {
-	await client.send(new PutObjectCommand({
-		Bucket: bucket,
-		Key: key,
-		Body: createReadStream(file),
-	}));
 }
 
 export async function deleteObject(bucket: string, key: string) {
@@ -70,7 +72,6 @@ export function createRandomVaultStructure(
 	maxSubDirectories = 10,
 	fileCounter = { val: 0}
 ) {
-	console.log(`Files created: ${fileCounter.val}`);
 	if (!existsSync(baseDir)) {
 		mkdirSync(baseDir, { recursive: true });
 	}
@@ -79,12 +80,9 @@ export function createRandomVaultStructure(
 		amountOfFilesToCreate = amountOfFiles - fileCounter.val;
 	}
 
-	console.log(`Creating ${amountOfFilesToCreate} files`);
-
 	for (let i = 0; i < amountOfFilesToCreate; i++) {
 		const randomString = Math.random().toString(36).substring(2, 8);
 		const file = join(baseDir, `${fileCounter.val}_${randomString}.md`);
-		console.log(`Creating file: ${file}`);
 		writeFileSync(file, `# File ${fileCounter.val}}`);
 		fileCounter.val++;
 	}
@@ -135,26 +133,33 @@ export function createVaultStructure(baseDir: string, structure: any) {
 	}
 }
 
-/**
- * Recursively find files in a directory.
- * @param dir Directory to search.
- * @param baseDir Directory to use as the base for relative paths.
- * @returns Paths of files relative to the base directory.
- */
-export function getFilesRecursively(dir: string, baseDir = dir) {
+export function getVaultFiles(dir: string, baseDir = dir) {
 	let filePaths: string[] = [];
 	const items = readdirSync(dir, { withFileTypes: true });
 	items.forEach((item) => {
+		if (item.name === ".obsidian") {
+			return;
+		}
 		const fullPath = join(dir, item.name);
 		const relativePath = relative(baseDir, fullPath);
 		if (item.isDirectory()) {
 			filePaths = filePaths.concat(
-				getFilesRecursively(fullPath, baseDir)
+				getVaultFiles(fullPath, baseDir)
 			);
 		} else if (item.isFile()) {
 			filePaths.push(relativePath);
 		}
 	});
 	return filePaths;
+}
+
+export function deleteVaultFiles(dir: string) {
+	const items = readdirSync(dir, { withFileTypes: true });
+	items.forEach((item) => {
+		if (item.name === ".obsidian") {
+			return;
+		}
+		rmSync(join(dir, item.name), { recursive: true, force: true });
+	});
 }
 
