@@ -1,11 +1,14 @@
 # Obsidian S3Sync Plugin
 
+Obsidian plugin for synchronizing to Amazon S3.
+
 ## How to use
 
-- Clone this repo.
+- Clone this repo to the Obsidian plugin directory.
 - Make sure your NodeJS is at least v22 (`node --version`).
 - `npm i` or `yarn` to install dependencies.
 - `npm run dev` to start compilation in watch mode.
+- Enable the plugin in Obsidian.
 
 # How to run tests
 
@@ -16,10 +19,26 @@ are ran in docker because we are using Localstack to simulate a S3 bucket.
 docker compose run --rm testrunner npm run test
 ```
 
+Alternatively for example if you need to keep the instance running between test
+runs you can first spin up the docker compose on background and the execute
+the tests inside the testrunner container:
+
+```
+docker compose up -d
+docker compose exec testrunner /bin/bash
+npm run test
+```
+
+To shutdown the containers run if you started them with the `up -d`:
+
+```
+docker compose down
+```
+
 ## Releasing new releases
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
+- Update `manifest.json` with new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
+- Update `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
 - Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
 - Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
 - Publish the release.
@@ -32,17 +51,12 @@ docker compose run --rm testrunner npm run test
 
 TODO
 
-
 ## Synchronizing algorithm
 
-Every time synchronization happens all files from the vault are inserted to 
-SQLite database that has a table for files. The database contains information
-about the files that existed during last synchronization and the current
-synchronization.
+TODO
 
 ### When does a file need to be synchronized
 
-When we have the local and remote files in the database we can query to delete
-all the data in the database we first delete the entrie 
+TODO
 
 ### How does the plugin solve the conflict?
