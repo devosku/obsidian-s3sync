@@ -162,6 +162,13 @@ export default class Synchronizer {
 		if (!fileInfo) {
 			throw new Error(`Could not find file ${filePath} in database ${this.dbPath}.`);
 		}
+		if (!fileInfo.currentLocalFile || !fileInfo.currentRemoteFile) {
+			throw new Error(
+				"Tried to solve a conflict for a file " +
+				`${filePath} that is not in conflict.`
+			);
+		}
+
 		if (fileToKeep === "local") {
 			await this.syncToBucket(fileInfo);
 		} else {

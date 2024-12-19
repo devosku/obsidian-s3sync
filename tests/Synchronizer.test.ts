@@ -123,7 +123,7 @@ describe("Synchronizer", () => {
 			const tmpFiles = await mkdtemp(
 				join(tmpdir(), "obsidian-s3sync-testfiles-")
 			);
-			const s3 = await getTestS3Helper("test");
+			const s3 = getTestS3Helper("test");
 			await s3.downloadObject(updatedFile, join(tmpFiles, updatedFile));
 			const fileContents = await readFile(
 				join(tmpFiles, updatedFile),
@@ -145,7 +145,7 @@ describe("Synchronizer", () => {
 			const content = "This is a new content";
 			const filePath = join(tmpFiles, "test.md");
 			await writeFile(filePath, content);
-			const s3 = await getTestS3Helper("test");
+			const s3 = getTestS3Helper("test");
 			await s3.uploadObject(updatedFile, filePath);
 
 			await synchronizer.startSync();
@@ -179,7 +179,7 @@ describe("Synchronizer", () => {
 			const remoteFileContent = "This is the remote file content";
 			await writeFile(join(tmpFiles, "temp1.md"), remoteFileContent);
 			await writeFile(join(tmpFiles, "temp2.md"), remoteFileContent);
-			const s3 = await getTestS3Helper("test");
+			const s3 = getTestS3Helper("test");
 			await s3.uploadObject(updatedFile1, join(tmpFiles, "temp1.md"));
 			await s3.uploadObject(updatedFile2, join(tmpFiles, "temp2.md"));
 			try {
@@ -206,7 +206,7 @@ describe("Synchronizer", () => {
 						if (e instanceof ConflictError) {
 							expect(e.conflict).toBe(updatedFile2);
 							await synchronizer.manuallySolveFileConflict(
-								updatedFile1,
+								updatedFile2,
 								"remote"
 							);
 							await synchronizer.startSync(true);
@@ -215,7 +215,7 @@ describe("Synchronizer", () => {
 								join(tmpFiles, "temp1.md")
 							);
 							await s3.downloadObject(
-								updatedFile1,
+								updatedFile2,
 								join(tmpFiles, "temp2.md")
 							);
 							const remoteFile1Contents = await readFile(
@@ -261,7 +261,7 @@ describe("Synchronizer", () => {
 		test("File deleted from bucket should be deleted locally", async () => {
 			// When there is no change since last sync in the local file we
 			// should delete it.
-			const s3 = await getTestS3Helper("test");
+			const s3 = getTestS3Helper("test");
 			const temporaryVaultPath = await createTempVault(100);
 			const synchronizer = getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
@@ -274,7 +274,7 @@ describe("Synchronizer", () => {
 		});
 
 		test("File deleted from bucket should not be deleted locally when it has changed", async () => {
-			const s3 = await getTestS3Helper("test");
+			const s3 = getTestS3Helper("test");
 			const temporaryVaultPath = await createTempVault(100);
 			const synchronizer = getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
@@ -295,7 +295,7 @@ describe("Synchronizer", () => {
 			const updatedFile = files[0];
 			const filePath = join(temporaryVaultPath, updatedFile);
 			await writeFile(filePath, "This is a new content");
-			const s3 = await getTestS3Helper("test");
+			const s3 = getTestS3Helper("test");
 			await s3.uploadObject(updatedFile, filePath);
 			rmSync(filePath);
 			await synchronizer.startSync();
