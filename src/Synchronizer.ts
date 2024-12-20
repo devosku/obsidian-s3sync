@@ -16,6 +16,22 @@ export class ConflictError extends Error {
 	}
 }
 
+function validateSettings(settings: S3SyncPluginSettings) {
+	const { bucket, region, accessKeyId, secretAccessKey } = settings;
+	if (!bucket) {
+		throw new Error("Missing bucket in settings");
+	}
+	if (!region) {
+		throw new Error("Missing region in settings");
+	}
+	if (!accessKeyId) {
+		throw new Error("Missing access key id in settings");
+	}
+	if (!secretAccessKey) {
+		throw new Error("Missing secret access key in settings");
+	}
+}
+
 export default class Synchronizer {
 	private vaultPath: string;
 	private s3: S3Helper;
@@ -23,6 +39,7 @@ export default class Synchronizer {
 
 
 	constructor(vaultPath: string, dbPath: string, settings: S3SyncPluginSettings) {
+		validateSettings(settings);
 		this.vaultPath = vaultPath.replace(/\/$/, "");
 		this.s3 = new S3Helper({ ...settings });
 		this.dbPath = dbPath;

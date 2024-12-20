@@ -53,7 +53,14 @@ function createTables(db: ReturnType<typeof Database>) {
 
 export function init(dbPath: string) {
 	_dbPath = dbPath;
-	const db = new Database(_dbPath);
+	let db;
+	try {
+		db = new Database(_dbPath);
+	} catch (e) {
+		throw new Error(
+			`Could not connect to the database (${dbPath}): ${e.message}`
+		);
+	}
 	try {
 		createTables(db);
 	} finally {
@@ -83,7 +90,11 @@ export function insertOrUpdateFile(file: NewDatabaseFileModel) {
 	}
 }
 
-export function deleteFile(path: string, remote: boolean, synchronizing: boolean) {
+export function deleteFile(
+	path: string,
+	remote: boolean,
+	synchronizing: boolean
+) {
 	const db = getDatabase();
 	try {
 		const stmt = db.prepare(

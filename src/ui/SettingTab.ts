@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 
-import S3SyncPlugin from "../main";
+import S3SyncPlugin from "../../main";
 
 export default class SettingTab extends PluginSettingTab {
 	plugin: S3SyncPlugin;

@@ -1,6 +1,9 @@
-import { Editor, MarkdownView, Notice, Plugin } from 'obsidian';
-import SampleModal from './src/SampleModal';
-import SettingTab from 'src/SettingTab';
+import { FileSystemAdapter, normalizePath, Notice, Plugin } from "obsidian";
+import ConflictModal from "./src/ui/ConflictModal";
+import SettingTab from "src/ui/SettingTab";
+import Synchronizer, { ConflictError } from "src/Synchronizer";
+import { join } from "path";
+import { writeFileSync } from "fs";
 
 // Remember to rename these classes and interfaces!
 
@@ -13,90 +16,103 @@ export interface S3SyncPluginSettings {
 }
 
 const DEFAULT_SETTINGS: S3SyncPluginSettings = {
-	bucket: '',
-	region: '',
-	accessKeyId: '',
-	secretAccessKey: ''
-}
+	bucket: "",
+	region: "",
+	accessKeyId: "",
+	secretAccessKey: "",
+};
 
 export default class S3SyncPlugin extends Plugin {
 	settings: S3SyncPluginSettings;
+	dbPath: string;
+	pluginDir: string;
+	vaultDir: string;
 
 	async onload() {
+		if (this.manifest.dir) {
+			this.pluginDir = this.manifest.dir;
+		} else {
+			new Notice(
+				"Could not load plugin directory from manifest..." +
+					"Plugin can't be loaded."
+			);
+			return;
+		}
+		this.vaultDir = normalizePath(this.app.vault.getRoot().path);
+		console.log(this.app.vault.adapter.getResourcePath(normalizePath(this.pluginDir)));
+		return;
 		await this.loadSettings();
 
 		// This creates an icon in the left ribbon.
-		// TODO: This should be the sync button
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+		this.addRibbonIcon("cloud-upload", "S3 Sync", async () => {
+			await this.doFullSync();
 		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
 
-		// TODO: Add some kind of sync status here?
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
+			id: "s3sync-full-sync",
+			name: "Start full synchronization to S3",
+			callback: async () => {
+				await this.doFullSync();
+			},
 		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new SettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
 	}
 
 	onunload() {
-
+		// TODO: Do we need to do something here?
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			await this.loadData()
+		);
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	async doFullSync(onlyFinishLastSync = false) {
+		const statusBarItemEl = this.addStatusBarItem();
+		statusBarItemEl.setText("Synchronizing vault to S3...");
+		let synchronizer;
+		try {
+			synchronizer = new Synchronizer(
+				this.app.vault.getRoot().path,
+				this.dbPath,
+				this.settings
+			);
+		} catch (e) {
+			new Notice(`Error synchronizing: ${e.message}`, 0);
+			statusBarItemEl.remove();
+			throw e;
+		}
+
+		try {
+			await synchronizer.startSync(onlyFinishLastSync);
+		} catch (e) {
+			if (e instanceof ConflictError) {
+				const modal = new ConflictModal(
+					this.app,
+					synchronizer,
+					e.conflict
+				);
+				modal.onClose = () => {
+					modal.contentEl.empty();
+					// Use setTimeout to prevent recursion causing stack overflow
+					setTimeout(async () => {
+						await this.doFullSync(true);
+					}, 0);
+				};
+			} else {
+				new Notice(`Error synchronizing: ${e.message}`, 0);
+				throw e;
+			}
+		} finally {
+			statusBarItemEl.remove();
+		}
 	}
 }
