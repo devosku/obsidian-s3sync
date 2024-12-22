@@ -1,15 +1,12 @@
 import { S3SyncPluginSettings } from "main";
 import S3Helper from "./S3Helper";
-import * as db from "./db";
-import { getFiles } from "./utils";
-import { join } from "path";
-import { FileInfo } from "./types";
-import { stat, rm } from "fs/promises";
+import { FileSyncInfo, FileSyncType, IFileSystemAdapter } from "./types";
+import FileSyncRepository from "./FileSyncRepository";
 
 export class ConflictError extends Error {
-	conflict: string;
+	conflict: FileSyncInfo;
 
-	constructor(conflict: string) {
+	constructor(conflict: FileSyncInfo) {
 		super("Local and remote files are in conflict.");
 		this.name = "ConflictError";
 		this.conflict = conflict;
@@ -33,156 +30,174 @@ function validateSettings(settings: S3SyncPluginSettings) {
 }
 
 export default class Synchronizer {
-	private vaultPath: string;
-	private s3: S3Helper;
-	private dbPath: string;
+	public s3: S3Helper;
+	public fileSystem: IFileSystemAdapter;
+	public fileSyncRepository: FileSyncRepository;
 
-
-	constructor(vaultPath: string, dbPath: string, settings: S3SyncPluginSettings) {
+	constructor(
+		fileSystem: IFileSystemAdapter,
+		fileSyncRepository: FileSyncRepository,
+		settings: S3SyncPluginSettings
+	) {
 		validateSettings(settings);
-		this.vaultPath = vaultPath.replace(/\/$/, "");
 		this.s3 = new S3Helper({ ...settings });
-		this.dbPath = dbPath;
-		db.init(dbPath);
+		this.fileSystem = fileSystem;
+		this.fileSyncRepository = fileSyncRepository;
 	}
 
 	async loadFilesToBeSynchronizedToDatabase() {
-		for await (const file of getFiles(this.vaultPath)) {
-			db.insertOrUpdateFile({
-				...file,
-				remote: false,
-				synchronizing: true,
-			});
-		}
+		const localFilesMap = await this.fileSystem.getFilesMap();
 		for await (const object of this.s3.listObjects()) {
-			db.insertOrUpdateFile({
+			if (localFilesMap[object.path]) {
+				const localFile = localFilesMap[object.path];
+				if (
+					localFile.mtime === object.mtime &&
+					localFile.size === object.size
+				) {
+					delete localFilesMap[object.path];
+					continue;
+				}
+			}
+			await this.fileSyncRepository.upsert({
 				...object,
-				remote: true,
-				synchronizing: true,
+				type: FileSyncType.RemoteFile,
 			});
 		}
-		db.deleteFilesNotNeedingSynchronization();
+		for (const path in localFilesMap) {
+			await this.fileSyncRepository.upsert({
+				...localFilesMap[path],
+				type: FileSyncType.LocalFile,
+			});
+		}
 	}
 
-	async syncToBucket(fileInfo: FileInfo) {
-		if (!fileInfo.currentLocalFile) {
+	async syncToBucket(fileInfo: FileSyncInfo) {
+		if (!fileInfo.localFile) {
 			throw new Error(
 				"Uh oh! This error should never happen. The file should exist locally."
 			);
 		}
-		await this.s3.uploadObject(
-			fileInfo.currentLocalFile.path,
-			join(this.vaultPath, fileInfo.currentLocalFile.path)
+		const buffer = await this.fileSystem.readBinary(
+			fileInfo.localFile.path
 		);
-		const mtime = (
-			await stat(join(this.vaultPath, fileInfo.currentLocalFile.path))
-		).mtime.getTime();
-		db.insertOrUpdateFile({
-			...fileInfo.currentLocalFile,
-			mtime,
-			remote: false,
-			synchronizing: false,
+		await this.s3.uploadObject(fileInfo.localFile.path, buffer, {
+			mtime: fileInfo.localFile.mtime.toString(),
 		});
-		db.insertOrUpdateFile({
-			...fileInfo.currentLocalFile,
-			mtime,
-			remote: true,
-			synchronizing: false,
+
+		await this.fileSyncRepository.upsert({
+			...fileInfo.localFile,
+			type: FileSyncType.LastSyncedFile
 		});
 	}
 
-	async syncToLocal(fileInfo: FileInfo) {
-		if (!fileInfo.currentRemoteFile) {
+	async syncToLocal(fileInfo: FileSyncInfo) {
+		if (!fileInfo.remoteFile) {
 			throw new Error(
 				"Holy moly! This error should never happen. The remote file should exist."
 			);
 		}
-		await this.s3.downloadObject(
-			fileInfo.currentRemoteFile.path,
-			join(this.vaultPath, fileInfo.currentRemoteFile.path)
+		const buffer = await this.s3.downloadObject(
+			fileInfo.remoteFile.path
 		);
-		db.insertOrUpdateFile({
-			...fileInfo.currentRemoteFile,
-			remote: false,
-			synchronizing: false,
-		});
-		db.insertOrUpdateFile({
-			...fileInfo.currentRemoteFile,
-			remote: true,
-			synchronizing: false,
+		await this.fileSystem.writeBinary(fileInfo.remoteFile.path, buffer);
+		await this.fileSyncRepository.upsert({
+			...fileInfo.remoteFile,
+			type: FileSyncType.LastSyncedFile
 		});
 	}
 
 	async removeLocalFile(filePath: string) {
-		await rm(join(this.vaultPath, filePath));
-		db.deleteFile(filePath, false, false);
+		await this.fileSystem.delete(filePath);
+		await this.fileSyncRepository.delete(filePath, FileSyncType.LastSyncedFile);
 	}
 
 	async removeRemoteFile(filePath: string) {
 		await this.s3.deleteObject(filePath);
-		db.deleteFile(filePath, true, false);
+		await this.fileSyncRepository.delete(filePath, FileSyncType.LastSyncedFile);
 	}
 
-	async solveFileConflict(fileInfo: FileInfo) {
-		if (!fileInfo.currentLocalFile || !fileInfo.currentRemoteFile) {
+	async solveFileConflict(fileInfo: FileSyncInfo) {
+		if (!fileInfo.localFile || !fileInfo.remoteFile) {
 			throw new Error(
 				"Well this is embarassing... This error should never happen."
 			);
 		}
 		if (
-			fileInfo.currentLocalFile.mtime > fileInfo.currentRemoteFile.mtime
+			fileInfo.localFile.mtime > fileInfo.remoteFile.mtime
 		) {
 			// If file has not changed in remote since last sync, upload it
-			if (fileInfo.prevRemoteFile?.mtime === fileInfo.currentRemoteFile.mtime) {
+			if (
+				fileInfo.lastSyncedFile?.mtime ===
+				fileInfo.remoteFile.mtime
+			) {
 				await this.syncToBucket(fileInfo);
 			} else {
-				throw new ConflictError(fileInfo.currentLocalFile.path);
+				throw new ConflictError(fileInfo);
 			}
 		} else if (
-			fileInfo.currentLocalFile.mtime < fileInfo.currentRemoteFile.mtime
+			fileInfo.localFile.mtime < fileInfo.remoteFile.mtime
 		) {
 			// If file has not changed locally since last sync, download it
-			if (fileInfo.prevLocalFile?.mtime === fileInfo.currentLocalFile.mtime) {
+			if (
+				fileInfo.lastSyncedFile?.mtime ===
+				fileInfo.localFile.mtime
+			) {
 				await this.syncToLocal(fileInfo);
 			} else {
-				throw new ConflictError(fileInfo.currentLocalFile.path);
+				throw new ConflictError(fileInfo);
 			}
+		} else {
+			// If both files have the same mtime
+			throw new ConflictError(fileInfo);
 		}
 	}
 
 	async syncFile(filePath: string) {
-		const fileInfo = db.getFileInfo(filePath);
+		const fileInfo = await this.fileSyncRepository.getFileSyncInfo(
+			filePath
+		);
 		if (!fileInfo) {
-			throw new Error(`Could not find file ${filePath} in database ${this.dbPath}.`);
+			throw new Error(`Could not find file ${filePath} in database`);
 		}
 
-		if (fileInfo.currentLocalFile && !fileInfo.currentRemoteFile) {
-			if (fileInfo.prevLocalFile?.mtime === fileInfo.currentLocalFile.mtime) {
-				await this.removeLocalFile(fileInfo.currentLocalFile.path);
+		if (fileInfo.localFile && !fileInfo.remoteFile) {
+			if (
+				fileInfo.lastSyncedFile?.mtime ===
+				fileInfo.localFile.mtime
+			) {
+				await this.removeLocalFile(fileInfo.localFile.path);
 			} else {
 				await this.syncToBucket(fileInfo);
 			}
-		} else if (!fileInfo.currentLocalFile && fileInfo.currentRemoteFile) {
-			if (fileInfo.prevRemoteFile?.mtime === fileInfo.currentRemoteFile.mtime) {
-				await this.removeRemoteFile(fileInfo.currentRemoteFile.path);
+		} else if (!fileInfo.localFile && fileInfo.remoteFile) {
+			if (
+				fileInfo.lastSyncedFile?.mtime ===
+				fileInfo.remoteFile.mtime
+			) {
+				await this.removeRemoteFile(fileInfo.remoteFile.path);
 			} else {
 				await this.syncToLocal(fileInfo);
 			}
-		} else if (fileInfo.currentLocalFile && fileInfo.currentRemoteFile) {
+		} else if (fileInfo.localFile && fileInfo.remoteFile) {
 			await this.solveFileConflict(fileInfo);
 		}
-		db.markFileSynchronizationComplete(filePath);
+		await this.fileSyncRepository.markSynchronizationComplete(filePath);
 	}
 
-	async manuallySolveFileConflict(filePath: string, fileToKeep: "local" | "remote") {
-		const fileInfo = db.getFileInfo(filePath);
+	async manuallySolveFileConflict(
+		filePath: string,
+		fileToKeep: "local" | "remote"
+	) {
+		const fileInfo = await this.fileSyncRepository.getFileSyncInfo(
+			filePath
+		);
 		if (!fileInfo) {
-			throw new Error(`Could not find file ${filePath} in database ${this.dbPath}.`);
+			throw new Error(`Could not find file ${filePath} in database.`);
 		}
-		if (!fileInfo.currentLocalFile || !fileInfo.currentRemoteFile) {
+		if (!fileInfo.localFile || !fileInfo.remoteFile) {
 			throw new Error(
 				"Tried to solve a conflict for a file " +
-				`${filePath} that is not in conflict.`
+					`${filePath} that is not in conflict.`
 			);
 		}
 
@@ -191,7 +206,7 @@ export default class Synchronizer {
 		} else {
 			await this.syncToLocal(fileInfo);
 		}
-		db.markFileSynchronizationComplete(filePath);
+		await this.fileSyncRepository.markSynchronizationComplete(filePath);
 	}
 
 	/**
@@ -199,18 +214,20 @@ export default class Synchronizer {
 	 */
 	async startSync(onlyFinishLastSync = false) {
 		// Ensure last synchronization was completed
-		const existingFilesNeedingSync = db.getFilesInSynchronization();
-		for (const filePath of existingFilesNeedingSync) {
-			await this.syncFile(filePath);
+		const existingFilesNeedingSync =
+			await this.fileSyncRepository.getFilesInSynchronization();
+		for (const file of existingFilesNeedingSync) {
+			await this.syncFile(file.path);
 		}
 		if (onlyFinishLastSync) {
 			return;
 		}
 		// Load files to be synchronized to database and synchronize them
 		await this.loadFilesToBeSynchronizedToDatabase();
-		const filesNeedingSync = db.getFilesInSynchronization();
-		for (const filePath of filesNeedingSync) {
-			await this.syncFile(filePath);
+		const filesInSync =
+			await this.fileSyncRepository.getFilesInSynchronization();
+		for (const file of filesInSync) {
+			await this.syncFile(file.path);
 		}
 	}
 }

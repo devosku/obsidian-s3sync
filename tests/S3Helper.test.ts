@@ -6,6 +6,8 @@ import {
 	getVaultFiles,
 	getTestS3Helper,
 	listObjects,
+	readFileToArrayBuffer,
+	saveArrayBufferToFile,
 } from "./helpers";
 import { md5 } from "../src/utils";
 import { existsSync } from "fs";
@@ -38,22 +40,11 @@ describe("S3Helper", () => {
 			const temporaryVaultPath = await createTempVault(1);
 			const files = getVaultFiles(temporaryVaultPath);
 			const file = files[0];
-			const fileMtimeBefore = await stat(
-				join(temporaryVaultPath, file)
-			).then((s) => s.mtimeMs);
-			// sleep for 1 second to ensure the mtime is different
-			await new Promise((resolve) => setTimeout(resolve, 1000));
-			await s3.uploadObject(file, join(temporaryVaultPath, file));
-			const fileMtimeAfter = await stat(
-				join(temporaryVaultPath, file)
-			).then((s) => s.mtimeMs);
-			expect(fileMtimeBefore).toBeLessThan(fileMtimeAfter);
+			const buffer = readFileToArrayBuffer(join(temporaryVaultPath, file));
+			await s3.uploadObject(file, buffer, { mtime: "123456789" });
+
 			const objects = await listObjects("test");
 			expect(objects.length).toBe(1);
-			const objectMtime = objects[0].LastModified
-				? new Date(objects[0].LastModified).getTime()
-				: 0;
-			expect(fileMtimeAfter).toBe(objectMtime);
 		});
 	});
 
@@ -63,7 +54,8 @@ describe("S3Helper", () => {
 			const temporaryVaultPath = await createTempVault(1);
 			const files = getVaultFiles(temporaryVaultPath);
 			const file = files[0];
-			await s3.uploadObject(file, join(temporaryVaultPath, file));
+			const buffer = readFileToArrayBuffer(join(temporaryVaultPath, file));
+			await s3.uploadObject(file, buffer, { mtime: "123456789" });
 			await s3.deleteObject(file);
 			const objects = await listObjects("test");
 			expect(objects.length).toBe(0);
@@ -76,18 +68,17 @@ describe("S3Helper", () => {
 			const temporaryVaultPath = await createTempVault(1);
 			const files = getVaultFiles(temporaryVaultPath);
 			const file = files[0];
-			await s3.uploadObject(file, join(temporaryVaultPath, file));
+			const buffer = readFileToArrayBuffer(join(temporaryVaultPath, file));
+			await s3.uploadObject(file, buffer, { mtime: "123456789" });
 			const downloadDir = await mkdtemp(
 				join(tmpdir(), "obsidian-s3sync-testfiles-")
 			);
-			await s3.downloadObject(file, join(downloadDir, file));
+			const dlBuffer = await s3.downloadObject(file);
+			saveArrayBufferToFile(dlBuffer, join(downloadDir, file));
 			expect(existsSync(join(downloadDir, file))).toBe(true);
 			expect(await md5(join(downloadDir, file))).toBe(
 				await md5(join(temporaryVaultPath, file))
 			);
-			const originalFileMtime = (await stat(join(temporaryVaultPath, file))).mtimeMs;
-			const downloadedFileMtime = (await stat(join(downloadDir, file))).mtimeMs;
-			expect(originalFileMtime).toBe(downloadedFileMtime);
 		});
 	});
 
@@ -97,7 +88,8 @@ describe("S3Helper", () => {
 			const temporaryVaultPath = await createTempVault(4);
 			const files = getVaultFiles(temporaryVaultPath);
 			for (const file of files) {
-				await s3.uploadObject(file, join(temporaryVaultPath, file));
+				const buffer = readFileToArrayBuffer(join(temporaryVaultPath, file));
+				await s3.uploadObject(file, buffer, { mtime: "123456789" });
 			}
 
 			const objects = [];
@@ -106,8 +98,9 @@ describe("S3Helper", () => {
 				const localFilePath = files.find((f) => f === o.path);
 				expect(localFilePath).toBeDefined();
 				// @ts-ignore
-				const localFileHash = await md5(join(temporaryVaultPath, localFilePath));
-				expect(localFileHash).toBe(o.hash);
+				const localFileStat = await stat(join(temporaryVaultPath, localFilePath));
+				expect(localFileStat.size).toBe(o.size);
+				expect(o.mtime).toBe(123456789);
 			}
 			expect(objects.length).toBe(4);
 		});

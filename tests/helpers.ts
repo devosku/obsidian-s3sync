@@ -5,7 +5,7 @@ import {
 	ListObjectsV2Command,
 	S3Client,
 } from "@aws-sdk/client-s3";
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join, relative } from "path";
 import S3Helper from "../src/S3Helper";
 
@@ -20,7 +20,7 @@ const client = new S3Client({
 	endpoint: ENDPOINT,
 	credentials: {
 		accessKeyId: ACCESS_KEY_ID,
-		secretAccessKey: SECRET_ACCESS_KEY
+		secretAccessKey: SECRET_ACCESS_KEY,
 	},
 	forcePathStyle: true,
 });
@@ -70,7 +70,7 @@ export function createRandomVaultStructure(
 	amountOfFiles = 20,
 	maxFilesInDirectory = 10,
 	maxSubDirectories = 10,
-	fileCounter = { val: 0}
+	fileCounter = { val: 0 }
 ) {
 	if (!existsSync(baseDir)) {
 		mkdirSync(baseDir, { recursive: true });
@@ -91,7 +91,9 @@ export function createRandomVaultStructure(
 		return;
 	}
 
-	const amountOfDirectoriesToCreate = Math.round(Math.random() * maxSubDirectories);
+	const amountOfDirectoriesToCreate = Math.round(
+		Math.random() * maxSubDirectories
+	);
 	for (let i = 0; i < amountOfDirectoriesToCreate; i++) {
 		const randomString = Math.random().toString(36).substring(2, 8);
 		const directory = join(baseDir, `${i}_${randomString}`);
@@ -108,9 +110,9 @@ export function createRandomVaultStructure(
 
 /**
  * Create a directory structure with files.
- * 
+ *
  * Example of structure:
- * 
+ *
  * {
  *  "dir1": {
  *   "file1.md": "# File 1",
@@ -137,15 +139,13 @@ export function getVaultFiles(dir: string, baseDir = dir) {
 	let filePaths: string[] = [];
 	const items = readdirSync(dir, { withFileTypes: true });
 	items.forEach((item) => {
-		if (item.name === ".obsidian") {
+		if (item.name.startsWith(".")) {
 			return;
 		}
 		const fullPath = join(dir, item.name);
 		const relativePath = relative(baseDir, fullPath);
 		if (item.isDirectory()) {
-			filePaths = filePaths.concat(
-				getVaultFiles(fullPath, baseDir)
-			);
+			filePaths = filePaths.concat(getVaultFiles(fullPath, baseDir));
 		} else if (item.isFile()) {
 			filePaths.push(relativePath);
 		}
@@ -156,10 +156,22 @@ export function getVaultFiles(dir: string, baseDir = dir) {
 export function deleteVaultFiles(dir: string) {
 	const items = readdirSync(dir, { withFileTypes: true });
 	items.forEach((item) => {
-		if (item.name === ".obsidian") {
+		if (item.name.startsWith(".")) {
 			return;
 		}
 		rmSync(join(dir, item.name), { recursive: true, force: true });
 	});
 }
 
+export function readFileToArrayBuffer(filePath: string) {
+	const buffer = readFileSync(filePath);
+	return buffer.buffer.slice(
+		buffer.byteOffset,
+		buffer.byteOffset + buffer.byteLength
+	);
+}
+
+export function saveArrayBufferToFile(buffer: ArrayBuffer, filePath: string) {
+	const b = Buffer.from(buffer);
+	writeFileSync(filePath, b);
+}

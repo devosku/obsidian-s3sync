@@ -6,12 +6,8 @@ import {
 	GetObjectCommand,
 	HeadObjectCommand,
 } from "@aws-sdk/client-s3";
-import { createReadStream, createWriteStream } from "fs";
-import { pipeline } from "stream/promises";
+import { FileSyncModel, FileSyncType } from "./types";
 import { Readable } from "stream";
-import { FileModel } from "./types";
-import { mkdir, utimes } from "fs/promises";
-import { dirname } from "path";
 
 interface S3HelperOptions {
 	region: string;
@@ -23,7 +19,7 @@ interface S3HelperOptions {
 
 export interface ObjectInfo {
 	key: string;
-	lastModified: number;
+	mtime: number;
 	hash: string;
 }
 
@@ -59,13 +55,22 @@ export default class S3Helper {
 			continuationToken = NextContinuationToken;
 			if (Contents) {
 				for (const item of Contents) {
-					const file: FileModel = {
+					if (!item.Key || item.Key.endsWith("/")) {
+						continue;
+					}
+					const head = await this.client.send(
+						new HeadObjectCommand({
+							Bucket: this.bucket,
+							Key: item.Key,
+						})
+					);
+					const file: Omit<FileSyncModel, "id"> = {
 						path: item.Key || "",
-						mtime: item.LastModified
-							? item.LastModified.getTime()
-							: 0,
-						hash: item.ETag ? JSON.parse(item.ETag) : "",
-						remote: true,
+						mtime: head.Metadata?.mtime
+							? +head.Metadata?.mtime
+							: -1,
+						size: item.Size || 0,
+						type: FileSyncType.RemoteFile
 					};
 					yield file;
 				}
@@ -73,11 +78,43 @@ export default class S3Helper {
 		} while (continuationToken);
 	}
 
-	async downloadObject(key: string, filePath: string) {
-		const dirPath = dirname(filePath);
-		await mkdir(dirPath, { recursive: true });
-		const fileStream = createWriteStream(filePath);
-		const { Body, LastModified } = await this.client.send(
+	private async objectBodyToArrayBuffer(
+		body?: Readable | ReadableStream | Blob
+	): Promise<ArrayBuffer> {
+		if (!body) {
+			throw new Error("Object body is empty");
+		}
+
+		if (body instanceof Blob) {
+			return body.arrayBuffer();
+		}
+
+		if (body instanceof ReadableStream) {
+			return new Response(body).arrayBuffer();
+		}
+
+		if (body instanceof Readable) {
+			return (await new Promise((resolve, reject) => {
+				const chunks: Uint8Array[] = [];
+				body.on("data", (chunk) => chunks.push(chunk));
+				body.on("error", reject);
+				body.on("end", () => {
+					const buffer = Buffer.concat(chunks);
+					resolve(
+						buffer.buffer.slice(
+							buffer.byteOffset,
+							buffer.byteOffset + buffer.byteLength
+						)
+					);
+				});
+			})) as ArrayBuffer;
+		}
+
+		throw new Error("Unsupported body type");
+	}
+
+	async downloadObject(key: string): Promise<ArrayBuffer> {
+		const { Body } = await this.client.send(
 			new GetObjectCommand({
 				Bucket: this.bucket,
 				Key: key,
@@ -86,8 +123,7 @@ export default class S3Helper {
 		if (!Body) {
 			throw new Error(`Object not found: ${key}`);
 		}
-		await pipeline(Body as Readable, fileStream);
-		await utimes(filePath, LastModified || 0, LastModified || 0);
+		return this.objectBodyToArrayBuffer(Body);
 	}
 
 	async getObjectInfo(key: string): Promise<ObjectInfo> {
@@ -100,30 +136,23 @@ export default class S3Helper {
 
 		return {
 			key: key,
-			lastModified: head.LastModified ? head.LastModified.getTime() : 0,
+			mtime: head.Metadata?.mtime ? +head.Metadata?.mtime : -1,
 			hash: head.ETag ? JSON.parse(head.ETag) : "",
 		};
 	}
 
 	async uploadObject(
 		key: string,
-		filePath: string,
+		content: ArrayBuffer,
 		metadata?: Record<string, string>
 	) {
-		const fileStream = createReadStream(filePath);
 		await this.client.send(
 			new PutObjectCommand({
 				Bucket: this.bucket,
 				Key: key,
-				Body: fileStream,
+				Body: new Uint8Array(content),
 				Metadata: metadata,
 			})
-		);
-		const objectInfo = await this.getObjectInfo(key);
-		await utimes(
-			filePath,
-			new Date(objectInfo.lastModified),
-			new Date(objectInfo.lastModified)
 		);
 	}
 

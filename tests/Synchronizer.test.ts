@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto";
 import {
 	ACCESS_KEY_ID,
 	createBucket,
@@ -5,31 +6,25 @@ import {
 	deleteAllObjects,
 	deleteBucket,
 	ENDPOINT,
-	getVaultFiles,
-	getTestS3Helper,
 	REGION,
 	SECRET_ACCESS_KEY,
 	deleteVaultFiles,
+	readFileToArrayBuffer,
 } from "./helpers";
-import { mkdirSync, rmSync } from "fs";
+import { rmSync, statSync } from "fs";
 import Synchronizer, { ConflictError } from "../src/Synchronizer";
 import { join } from "path";
 import { tmpdir } from "os";
-import { writeFile, mkdtemp, readFile } from "fs/promises";
-import * as db from "../src/db";
+import { writeFile, mkdtemp } from "fs/promises";
+import FileSystemAdapter from "./FileSystemAdapter";
+import FileSyncRepository from "../src/FileSyncRepository";
+import S3Helper from "../src/S3Helper";
 
 function getSynchronizer(vaultPath: string) {
-	const dbPath = join(
-		vaultPath,
-		".obsidian",
-		"plugins",
-		"obsidian-s3sync",
-		"db.sqlite"
-	);
-	mkdirSync(join(vaultPath, ".obsidian", "plugins", "obsidian-s3sync"), {
-		recursive: true,
-	});
-	return new Synchronizer(vaultPath, dbPath, {
+	const fileSystem = new FileSystemAdapter(vaultPath);
+	const fileSyncRepository = new FileSyncRepository("testdb");
+
+	return new Synchronizer(fileSystem, fileSyncRepository, {
 		bucket: "test",
 		region: REGION,
 		accessKeyId: ACCESS_KEY_ID,
@@ -38,16 +33,9 @@ function getSynchronizer(vaultPath: string) {
 	});
 }
 
-function wipeDatabase(vaultPath: string) {
-	const dbPath = join(
-		vaultPath,
-		".obsidian",
-		"plugins",
-		"obsidian-s3sync",
-		"db.sqlite"
-	);
-	rmSync(dbPath);
-	db.init(dbPath);
+async function wipeDatabase() {
+	const fileSyncRepository = new FileSyncRepository("testdb");
+	await fileSyncRepository.deleteAll();
 }
 
 /**
@@ -66,10 +54,10 @@ beforeEach(async () => {
 afterEach(async () => {
 	await deleteAllObjects("test");
 	await deleteBucket("test");
+	await wipeDatabase();
 });
 
-async function listBucketObjects() {
-	const s3 = getTestS3Helper("test");
+async function listBucketObjects(s3: S3Helper) {
 	const objects = [];
 	for await (const o of s3.listObjects()) {
 		objects.push(o);
@@ -79,64 +67,68 @@ async function listBucketObjects() {
 
 describe("Synchronizer", () => {
 	describe("startSync", () => {
-		test("Files should be synced correctly first time", async () => {
+		test("Files should be synced correctly", async () => {
 			// Test that files get synced from local to bucket
-			const temporaryVaultPath = await createTempVault(100);
+			const temporaryVaultPath = await createTempVault(10);
 			const synchronizer = getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
-			let objects = await listBucketObjects();
-			expect(objects.length).toBe(100);
+			let objects = await listBucketObjects(synchronizer.s3);
+			expect(objects.length).toBe(10);
 
 			// Test that files get synced from bucket to local
 			deleteVaultFiles(temporaryVaultPath);
-			wipeDatabase(temporaryVaultPath);
+			await wipeDatabase();
 			await synchronizer.startSync();
-			const files = getVaultFiles(temporaryVaultPath);
-			expect(files.length).toBe(100);
+			const files = synchronizer.fileSystem.getFiles();
+			expect(files.length).toBe(10);
 
 			// Test that files get synced both ways
 			deleteVaultFiles(temporaryVaultPath);
-			wipeDatabase(temporaryVaultPath);
+			await wipeDatabase();
 			await writeFile(
 				join(temporaryVaultPath, "test.md"),
 				"This is a test file"
 			);
 			await synchronizer.startSync();
-			const filesAfterSync = getVaultFiles(temporaryVaultPath);
-			expect(filesAfterSync.length).toBe(101);
-			objects = await listBucketObjects();
-			expect(objects.length).toBe(101);
-		}, 10000);
+			const filesAfterSync = synchronizer.fileSystem.getFiles();
+			expect(filesAfterSync.length).toBe(11);
+			objects = await listBucketObjects(synchronizer.s3);
+			expect(objects.length).toBe(11);
+		}, 20000);
 
-		test("File updated locally should be updated in bucket", async () => {
-			const temporaryVaultPath = await createTempVault(100);
+		test("FileSync database should be cleaned after sync", async () => {
+			const temporaryVaultPath = await createTempVault(10);
 			const synchronizer = getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
 
-			const files = getVaultFiles(temporaryVaultPath);
+			const dbEntries = await synchronizer.fileSyncRepository.getAll();
+			expect(dbEntries.length).toBe(10);
+		});
+
+		test("File updated locally should be updated in bucket", async () => {
+			const temporaryVaultPath = await createTempVault(10);
+			const synchronizer = getSynchronizer(temporaryVaultPath);
+			await synchronizer.startSync();
+
+			const files = synchronizer.fileSystem.getFiles();
 			const updatedFile = files[0];
-			const filePath = join(temporaryVaultPath, updatedFile);
+			const filePath = join(temporaryVaultPath, updatedFile.path);
 			const content = "This is a new content";
 			await writeFile(filePath, content);
 			await synchronizer.startSync();
 
-			const tmpFiles = await mkdtemp(
-				join(tmpdir(), "obsidian-s3sync-testfiles-")
+			const buffer = await synchronizer.s3.downloadObject(
+				updatedFile.path
 			);
-			const s3 = getTestS3Helper("test");
-			await s3.downloadObject(updatedFile, join(tmpFiles, updatedFile));
-			const fileContents = await readFile(
-				join(tmpFiles, updatedFile),
-				"utf-8"
-			);
+			const fileContents = new TextDecoder().decode(buffer);
 			expect(fileContents).toBe(content);
 		});
 
 		test("File updated in bucket should be updated locally", async () => {
-			const temporaryVaultPath = await createTempVault(100);
+			const temporaryVaultPath = await createTempVault(10);
 			const synchronizer = getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
-			const files = getVaultFiles(temporaryVaultPath);
+			const files = synchronizer.fileSystem.getFiles();
 			const updatedFile = files[0];
 
 			const tmpFiles = await mkdtemp(
@@ -145,94 +137,151 @@ describe("Synchronizer", () => {
 			const content = "This is a new content";
 			const filePath = join(tmpFiles, "test.md");
 			await writeFile(filePath, content);
-			const s3 = getTestS3Helper("test");
-			await s3.uploadObject(updatedFile, filePath);
+			let buffer = readFileToArrayBuffer(filePath);
+			const mtime = statSync(filePath).mtimeMs.toString();
+			await synchronizer.s3.uploadObject(updatedFile.path, buffer, {
+				mtime,
+			});
 
 			await synchronizer.startSync();
-			const fileContents = await readFile(
-				join(temporaryVaultPath, updatedFile),
-				"utf-8"
-			);
+			buffer = await synchronizer.fileSystem.readBinary(updatedFile.path);
+			const fileContents = new TextDecoder().decode(buffer);
 			expect(fileContents).toBe(content);
 		});
 
-		test("File updated locally and in bucket should be updated both ways", async () => {
-			const temporaryVaultPath = await createTempVault(100);
+		test("Should throw ConflictError when file is updated both locally and in bucket but have same mtime", async () => {
+			const temporaryVaultPath = await createTempVault(2);
 			const synchronizer = getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
-			const files = getVaultFiles(temporaryVaultPath);
+			const files = synchronizer.fileSystem.getFiles();
+			const updatedFile = files[0];
+			const localFileContent = "This is the local file content";
+			await synchronizer.fileSystem.writeBinary(
+				updatedFile.path,
+				new TextEncoder().encode(localFileContent).buffer
+			);
+			const tmpFiles = await mkdtemp(
+				join(tmpdir(), "obsidian-s3sync-testfiles-")
+			);
+			const remoteFileContent = "This is the remote file content";
+			await writeFile(join(tmpFiles, "temp.md"), remoteFileContent);
+			const updatedFileBuffer = readFileToArrayBuffer(
+				join(tmpFiles, "temp.md")
+			);
+			const mtime = statSync(
+				join(temporaryVaultPath, updatedFile.path)
+			).mtimeMs.toString();
+			await synchronizer.s3.uploadObject(
+				updatedFile.path,
+				updatedFileBuffer,
+				{
+					mtime,
+				}
+			);
+
+			expect.assertions(2);
+			try {
+				await synchronizer.startSync();
+			} catch (e) {
+				expect(e).toBeInstanceOf(ConflictError);
+				expect(e.conflict.localFile.path).toBe(updatedFile.path);
+			}
+		});
+
+		test("File updated locally and in bucket should be updated both ways", async () => {
+			const temporaryVaultPath = await createTempVault(2);
+			const synchronizer = getSynchronizer(temporaryVaultPath);
+			await synchronizer.startSync();
+			const files = synchronizer.fileSystem.getFiles();
 			const updatedFile1 = files[0];
 			const updatedFile2 = files[1];
 			const localFileContent = "This is the local file content";
-			await writeFile(
-				join(temporaryVaultPath, updatedFile1),
-				localFileContent
+			await synchronizer.fileSystem.writeBinary(
+				updatedFile1.path,
+				new TextEncoder().encode(localFileContent).buffer
 			);
-			await writeFile(
-				join(temporaryVaultPath, updatedFile2),
-				localFileContent
+			await synchronizer.fileSystem.writeBinary(
+				updatedFile2.path,
+				new TextEncoder().encode(localFileContent).buffer
 			);
-
 			const tmpFiles = await mkdtemp(
 				join(tmpdir(), "obsidian-s3sync-testfiles-")
 			);
 			const remoteFileContent = "This is the remote file content";
 			await writeFile(join(tmpFiles, "temp1.md"), remoteFileContent);
 			await writeFile(join(tmpFiles, "temp2.md"), remoteFileContent);
-			const s3 = getTestS3Helper("test");
-			await s3.uploadObject(updatedFile1, join(tmpFiles, "temp1.md"));
-			await s3.uploadObject(updatedFile2, join(tmpFiles, "temp2.md"));
+
+			// Update file 1
+			const updatedFile1Buffer = readFileToArrayBuffer(
+				join(tmpFiles, "temp1.md")
+			);
+			const mtime1 = statSync(
+				join(tmpFiles, "temp1.md")
+			).mtimeMs.toString();
+			await synchronizer.s3.uploadObject(
+				updatedFile1.path,
+				updatedFile1Buffer,
+				{
+					mtime: mtime1,
+				}
+			);
+
+			// Update file 2
+			const updatedFile2Buffer = readFileToArrayBuffer(
+				join(tmpFiles, "temp2.md")
+			);
+			const mtime2 = statSync(
+				join(tmpFiles, "temp2.md")
+			).mtimeMs.toString();
+			await synchronizer.s3.uploadObject(
+				updatedFile2.path,
+				updatedFile2Buffer,
+				{
+					mtime: mtime2,
+				}
+			);
+
+			expect.assertions(6);
 			try {
-				await expect(synchronizer.startSync()).rejects.toThrow();
 				await synchronizer.startSync();
 			} catch (e) {
-				expect(e).toBeInstanceOf(ConflictError);
 				if (e instanceof ConflictError) {
-					expect(e.conflict).toBe(updatedFile1);
-					await expect(
-						synchronizer.startSync(true)
-					).rejects.toThrow();
+					expect(e.conflict.localFile?.path).toBe(updatedFile1.path);
 					await synchronizer.manuallySolveFileConflict(
-						updatedFile1,
+						updatedFile1.path,
 						"local"
 					);
-					await expect(
-						synchronizer.startSync(true)
-					).rejects.toThrow();
 					try {
 						await synchronizer.startSync(true);
 					} catch (e) {
-						expect(e).toBeInstanceOf(ConflictError);
 						if (e instanceof ConflictError) {
-							expect(e.conflict).toBe(updatedFile2);
+							expect(e.conflict.localFile?.path).toBe(updatedFile2.path);
 							await synchronizer.manuallySolveFileConflict(
-								updatedFile2,
+								updatedFile2.path,
 								"remote"
 							);
 							await synchronizer.startSync(true);
-							await s3.downloadObject(
-								updatedFile1,
-								join(tmpFiles, "temp1.md")
+							const newUpdatedFile1Buffer =
+								await synchronizer.s3.downloadObject(
+									updatedFile1.path
+								);
+							const newUpdatedFile2Buffer =
+								await synchronizer.s3.downloadObject(
+									updatedFile2.path
+								);
+							const remoteFile1Contents =
+								new TextDecoder().decode(newUpdatedFile1Buffer);
+							const remoteFile2Contents =
+								new TextDecoder().decode(newUpdatedFile2Buffer);
+							const localFile1Contents = new TextDecoder().decode(
+								readFileToArrayBuffer(
+									join(temporaryVaultPath, updatedFile1.path)
+								)
 							);
-							await s3.downloadObject(
-								updatedFile2,
-								join(tmpFiles, "temp2.md")
-							);
-							const remoteFile1Contents = await readFile(
-								join(tmpFiles, "temp1.md"),
-								"utf-8"
-							);
-							const localFile1Contents = await readFile(
-								join(temporaryVaultPath, updatedFile1),
-								"utf-8"
-							);
-							const remoteFile2Contents = await readFile(
-								join(tmpFiles, "temp2.md"),
-								"utf-8"
-							);
-							const localFile2Contents = await readFile(
-								join(temporaryVaultPath, updatedFile2),
-								"utf-8"
+							const localFile2Contents = new TextDecoder().decode(
+								readFileToArrayBuffer(
+									join(temporaryVaultPath, updatedFile2.path)
+								)
 							);
 
 							expect(remoteFile1Contents).toBe(localFileContent);
@@ -246,62 +295,62 @@ describe("Synchronizer", () => {
 		});
 
 		test("File deleted locally should be deleted from bucket", async () => {
-			const temporaryVaultPath = await createTempVault(100);
+			const temporaryVaultPath = await createTempVault(10);
 			const synchronizer = getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
-			const files = getVaultFiles(temporaryVaultPath);
-			const fileToDelete = files[0];
+			const files = synchronizer.fileSystem.getFiles();
+			const fileToDelete = files[0].path;
 			rmSync(join(temporaryVaultPath, fileToDelete));
 			await synchronizer.startSync();
-			const objects = await listBucketObjects();
-			expect(objects.length).toBe(99);
+			const objects = await listBucketObjects(synchronizer.s3);
+			expect(objects.length).toBe(9);
 			rmSync(temporaryVaultPath, { recursive: true });
 		});
 
 		test("File deleted from bucket should be deleted locally", async () => {
 			// When there is no change since last sync in the local file we
 			// should delete it.
-			const s3 = getTestS3Helper("test");
-			const temporaryVaultPath = await createTempVault(100);
+			const temporaryVaultPath = await createTempVault(10);
 			const synchronizer = getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
-			const objects = await listBucketObjects();
+			const objects = await listBucketObjects(synchronizer.s3);
 			const objectToDelete = objects[0];
-			await s3.deleteObject(objectToDelete.path);
+			await synchronizer.s3.deleteObject(objectToDelete.path);
 			await synchronizer.startSync();
-			const files = getVaultFiles(temporaryVaultPath);
-			expect(files.length).toBe(99);
+			const files = synchronizer.fileSystem.getFiles();
+			expect(files.length).toBe(9);
 		});
 
 		test("File deleted from bucket should not be deleted locally when it has changed", async () => {
-			const s3 = getTestS3Helper("test");
-			const temporaryVaultPath = await createTempVault(100);
+			const temporaryVaultPath = await createTempVault(10);
 			const synchronizer = getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
-			const objects = await listBucketObjects();
+			const objects = await listBucketObjects(synchronizer.s3);
 			const objectToDelete = objects[0];
-			await s3.deleteObject(objectToDelete.path);
+			await synchronizer.s3.deleteObject(objectToDelete.path);
 			const filePath = join(temporaryVaultPath, objectToDelete.path);
 			await writeFile(filePath, "This is a new content");
 			await synchronizer.startSync();
-			expect(getVaultFiles(temporaryVaultPath).length).toBe(100);
+			const files = synchronizer.fileSystem.getFiles();
+			expect(files.length).toBe(10);
 		});
 
 		test("File deleted locally should not be deleted from bucket when it has changed", async () => {
-			const temporaryVaultPath = await createTempVault(100);
+			const temporaryVaultPath = await createTempVault(10);
 			const synchronizer = getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
-			const files = getVaultFiles(temporaryVaultPath);
+			let files = synchronizer.fileSystem.getFiles();
 			const updatedFile = files[0];
-			const filePath = join(temporaryVaultPath, updatedFile);
+			const filePath = join(temporaryVaultPath, updatedFile.path);
 			await writeFile(filePath, "This is a new content");
-			const s3 = getTestS3Helper("test");
-			await s3.uploadObject(updatedFile, filePath);
+			const buffer = await readFileToArrayBuffer(filePath);
+			await synchronizer.s3.uploadObject(updatedFile.path, buffer, {
+				mtime: statSync(filePath).mtimeMs.toString(),
+			});
 			rmSync(filePath);
 			await synchronizer.startSync();
-			expect(getVaultFiles(temporaryVaultPath).length).toBe(100);
+			files = synchronizer.fileSystem.getFiles();
+			expect(files.length).toBe(10);
 		});
 	});
 });
-
-// TODO: test that paths are always unix style

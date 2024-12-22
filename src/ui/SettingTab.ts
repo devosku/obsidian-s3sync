@@ -65,6 +65,7 @@ export default class SettingTab extends PluginSettingTab {
 					.addOption("me-south-1", "Middle East (Bahrain)")
 					.addOption("me-central-1", "Middle East (UAE)")
 					.addOption("sa-east-1", "South America (São Paulo)")
+					.setValue(this.plugin.settings.region)
 					.onChange(async (value) => {
 						this.plugin.settings.region = value;
 						await this.plugin.saveSettings();
