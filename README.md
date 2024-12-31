@@ -20,13 +20,111 @@ for my personal usage and there are some more professional alternatives:
 
 ## Usage
 
+To use this plugin you must install the plugin itself and create the required
+AWS resources.
+
 ### How to install
 
-TODO
+The plugin is not currently available from the Obsidian community plugins so
+you can do one of the following:
 
-### How to create S3 bucket
+1. Install with BRAT
+  - First install the [BRAT](https://github.com/TfTHacker/obsidian42-brat)
+  plugin from the community plugins
+  - Add the https://github.com/devosku/obsidian-s3sync in BRAT settings
+2. Install manually
+  - Download or clone the plugin to your vaults `.obsidian/plugins` directory
 
-TODO
+### How to create required AWS resources
+
+There are many ways you can create the required resources, but this guide
+describes how to do it with AWS CloudFormation through AWS CLI. Please see
+[AWS guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-quickstart.html)
+if you need help with setting up the AWS CLI.
+
+You can use the following cloudformation template to create the required
+AWS resources:
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Obsidian vault S3 bucket with CORS and IAM user'
+
+Resources:
+  S3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      VersioningConfiguration:
+        Status: Suspended
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - HEAD
+              - PUT
+              - POST
+              - DELETE
+            AllowedOrigins:
+              - '*'
+            ExposedHeaders:
+              - x-amz-meta-mtime
+
+  IAMUser:
+    Type: 'AWS::IAM::User'
+    Properties:
+      UserName: !Sub '${AWS::StackName}-s3-user'
+      Policies:
+        - PolicyName: S3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:ListBucket'
+                  - 's3:DeleteObject'
+                Resource:
+                  - !GetAtt S3Bucket.Arn
+                  - !Sub '${S3Bucket.Arn}/*'
+
+Outputs:
+  BucketName:
+    Description: Name of the created S3 bucket
+    Value: !Ref S3Bucket
+
+  IAMUser:
+    Description: IAM user
+    Value: !Ref IAMUser
+```
+
+To deploy the template save it to a file (s3-setup.yaml) and run:
+
+**Note that you can change the name of the stack (obsidian-s3-stack) which will
+affect the naming of all the created resources!**
+
+```bash
+aws cloudformation deploy \
+  --template-file s3-setup.yaml \
+  --stack-name obsidian-s3-stack \
+  --capabilities CAPABILITY_NAMED_IAM
+```
+
+To get bucket name and user:
+
+```bash
+aws cloudformation describe-stacks \
+  --stack-name obsidian-s3-stack \
+  --query 'Stacks[0].Outputs[*].[OutputKey,OutputValue]' \
+  --output table
+```
+
+To create credentials for the user (access key id and secret access key):
+
+```bash
+aws iam create-access-key --user-name obsidian-s3-stack-s3-user
+```
 
 ## Future improvements
 
