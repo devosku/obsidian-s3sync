@@ -15,8 +15,6 @@ for my personal usage and there are some more professional alternatives:
 ## Features
 
 - Synchronize your Obsidian vault to Amazon S3
-    - From button in ribbon
-    - From command palette
 
 ## Usage
 
@@ -125,18 +123,6 @@ To create credentials for the user (access key id and secret access key):
 ```bash
 aws iam create-access-key --user-name obsidian-s3-stack-s3-user
 ```
-
-## Future improvements
-
-- Add support for syncing when file is saved/deleted
-    - Currently the synchronization only happens when user starts it manually.
-- Merge files
-    - Currently you can only choose if you want to keep the local or remote file
-    when there is a conflict. A possibility to merge these two files would be
-    nice.
-- Obfuscate settings
-    - The credential to access the bucket are stored in clear text and we should
-    at least obfuscate the text so people do not accidentally leak them.
 
 ## Development
 
