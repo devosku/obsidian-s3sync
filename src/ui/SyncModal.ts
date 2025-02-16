@@ -12,13 +12,11 @@ export default class SyncModal extends Modal {
 	public setSyncProgressState(state: SyncProgressState) {
 		this.syncProgressState = state;
 		const msg = this.contentEl.querySelector("p");
-		const label = this.contentEl.querySelector("label");
 		const progressBar = this.contentEl.querySelector("progress");
-		if (!msg || !label || !progressBar) {
+		if (!msg || !progressBar) {
 			return;
 		}
 		msg.innerText = state.msg;
-		label.innerText = `${state.current}/${state.total}:`;
 		progressBar.setAttribute("value", state.current.toString());
 		progressBar.setAttribute("max", state.total.toString());
 	}
@@ -27,12 +25,6 @@ export default class SyncModal extends Modal {
 		const { contentEl } = this;
 		const msg = contentEl.createEl("p", { text: this.syncProgressState.msg });
 		msg.style.marginTop = "0";
-
-		const label = contentEl.createEl("label", {
-			attr: { for: "s3sync-progress" },
-			text: `${this.syncProgressState.current}/${this.syncProgressState.total}:`,
-		});
-		label.style.display = "block";
 
 		const progressBar = contentEl.createEl("progress", {
 			attr: {
