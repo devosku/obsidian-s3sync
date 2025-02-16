@@ -52,9 +52,18 @@ export default class ConflictModal extends Modal {
 				"modified locally and on the cloud storage.",
 		});
 
-		contentEl.createEl("h2", {
-			text: `Conflicting file: ${this.conflict.localFile?.path}`,
+		const fileLink = contentEl.createEl("a", {
+			text: this.conflict.localFile?.path,
 		});
+		fileLink.style.wordBreak = 'break-all';
+		if (this.conflict.localFile) {
+			fileLink.setAttr(
+				"href",
+				`obsidian://open?vault=${this.app.vault.getName()}&file=${encodeURIComponent(
+					this.conflict.localFile.path
+				)}`
+			);
+		}
 
 		contentEl.createEl("p", {
 			text:
@@ -68,6 +77,7 @@ export default class ConflictModal extends Modal {
 		flexEl.style.marginBottom = "8px";
 
 		const leftEl = flexEl.createEl("div");
+		leftEl.style.marginRight = "8px";
 		const rightEl = flexEl.createEl("div");
 
 		const leftTitleEl = leftEl.createEl("h3", { text: "Local file" });
