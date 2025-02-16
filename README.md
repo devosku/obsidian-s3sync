@@ -43,69 +43,17 @@ if you need help with setting up the AWS CLI.
 You can use the following cloudformation template to create the required
 AWS resources:
 
-```yaml
-AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Obsidian vault S3 bucket with CORS and IAM user'
+[cloudformation-s3-setup.yaml](./cloudformation-s3-setup.yaml)
 
-Resources:
-  S3Bucket:
-    Type: 'AWS::S3::Bucket'
-    Properties:
-      VersioningConfiguration:
-        Status: Suspended
-      CorsConfiguration:
-        CorsRules:
-          - AllowedHeaders:
-              - '*'
-            AllowedMethods:
-              - GET
-              - HEAD
-              - PUT
-              - POST
-              - DELETE
-            AllowedOrigins:
-              - '*'
-            ExposedHeaders:
-              - x-amz-meta-mtime
-
-  IAMUser:
-    Type: 'AWS::IAM::User'
-    Properties:
-      UserName: !Sub '${AWS::StackName}-s3-user'
-      Policies:
-        - PolicyName: S3AccessPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - 's3:GetObject'
-                  - 's3:PutObject'
-                  - 's3:ListBucket'
-                  - 's3:DeleteObject'
-                Resource:
-                  - !GetAtt S3Bucket.Arn
-                  - !Sub '${S3Bucket.Arn}/*'
-
-Outputs:
-  BucketName:
-    Description: Name of the created S3 bucket
-    Value: !Ref S3Bucket
-
-  IAMUser:
-    Description: IAM user
-    Value: !Ref IAMUser
-```
-
-To deploy the template save it to a file (s3-setup.yaml) and run:
+To run the template:
 
 **Note that you can change the name of the stack (obsidian-s3-stack) which will
 affect the naming of all the created resources!**
 
 ```bash
 aws cloudformation deploy \
-  --template-file s3-setup.yaml \
-  --stack-name obsidian-s3-stack \
+  --template-file cloudformation-s3-setup.yaml \
+  --stack-name obsidian-s3-sync-stack \
   --capabilities CAPABILITY_NAMED_IAM
 ```
 
@@ -113,7 +61,7 @@ To get bucket name and user:
 
 ```bash
 aws cloudformation describe-stacks \
-  --stack-name obsidian-s3-stack \
+  --stack-name obsidian-s3-sync-stack \
   --query 'Stacks[0].Outputs[*].[OutputKey,OutputValue]' \
   --output table
 ```
@@ -121,7 +69,7 @@ aws cloudformation describe-stacks \
 To create credentials for the user (access key id and secret access key):
 
 ```bash
-aws iam create-access-key --user-name obsidian-s3-stack-s3-user
+aws iam create-access-key --user-name obsidian-s3-sync-stack-s3-user
 ```
 
 ## Development
