@@ -75,3 +75,9 @@ export interface IFileSystemAdapter {
 	writeBinary(path: string, data: ArrayBuffer): Promise<void>;
 	delete(path: string): Promise<void>;
 }
+
+export interface SyncProgressState {
+	msg: string;
+	current: number;
+	total: number;
+}

@@ -5,6 +5,7 @@ import SettingTab from "./src/ui/SettingTab";
 import FileSystemAdapter from "./src/FileSystemAdapter";
 import Synchronizer, { ConflictError } from "./src/Synchronizer";
 import FileSyncRepository from "src/FileSyncRepository";
+import SyncModal from "src/ui/SyncModal";
 
 export interface S3SyncPluginSettings {
 	bucket: string;
@@ -70,13 +71,23 @@ export default class S3SyncPlugin extends Plugin {
 	async doFullSync(onlyFinishLastSync = false) {
 		const statusBarItemEl = this.addStatusBarItem();
 		statusBarItemEl.setText("Synchronizing vault with S3...");
+		const progressModal = new SyncModal(this.app, {
+			msg: "Starting synchronization...",
+			current: 0,
+			total: 1,
+		});
+		progressModal.open();
 		let synchronizer;
 
 		try {
 			synchronizer = this.createSynchronizer();
+			synchronizer.addProgressListener((progress) => {
+				progressModal.setSyncProgressState(progress);
+			});
 		} catch (e) {
 			new Notice(`Error synchronizing: ${e.message}`, 0);
 			statusBarItemEl.remove();
+			progressModal.close();
 			throw e;
 		}
 
@@ -103,6 +114,7 @@ export default class S3SyncPlugin extends Plugin {
 			}
 		} finally {
 			statusBarItemEl.remove();
+			progressModal.close();
 		}
 	}
 }

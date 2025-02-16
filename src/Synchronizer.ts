@@ -1,6 +1,6 @@
 import { S3SyncPluginSettings } from "main";
 import S3Helper from "./S3Helper";
-import { FileSyncInfo, FileSyncType, IFileSystemAdapter } from "./types";
+import { FileSyncInfo, FileSyncType, IFileSystemAdapter, SyncProgressState } from "./types";
 import FileSyncRepository from "./FileSyncRepository";
 
 export class ConflictError extends Error {
@@ -33,6 +33,7 @@ export default class Synchronizer {
 	public s3: S3Helper;
 	public fileSystem: IFileSystemAdapter;
 	public fileSyncRepository: FileSyncRepository;
+	private progressListeners: ((state: SyncProgressState) => void)[] = [];
 
 	constructor(
 		fileSystem: IFileSystemAdapter,
@@ -43,6 +44,10 @@ export default class Synchronizer {
 		this.s3 = new S3Helper({ ...settings });
 		this.fileSystem = fileSystem;
 		this.fileSyncRepository = fileSyncRepository;
+	}
+
+	addProgressListener(listener: (state: SyncProgressState) => void) {
+		this.progressListeners.push(listener);
 	}
 
 	async loadFilesToBeSynchronizedToDatabase() {
@@ -209,6 +214,12 @@ export default class Synchronizer {
 		await this.fileSyncRepository.markSynchronizationComplete(filePath);
 	}
 
+	private triggerProgressListeners(state: SyncProgressState) {
+		for (const listener of this.progressListeners) {
+			listener(state);
+		}
+	}
+
 	/**
 	 * Synchronize local files with S3 bucket.
 	 */
@@ -216,7 +227,14 @@ export default class Synchronizer {
 		// Ensure last synchronization was completed
 		const existingFilesNeedingSync =
 			await this.fileSyncRepository.getFilesInSynchronization();
-		for (const file of existingFilesNeedingSync) {
+		for (let i = 0; i < existingFilesNeedingSync.length - 1; i++) {
+			const file = existingFilesNeedingSync[i];
+			this.triggerProgressListeners({
+				msg: `Synchronizing ${file.path}`,
+				current: i + 1,
+				total: existingFilesNeedingSync.length,
+			});
+
 			await this.syncFile(file.path);
 		}
 		if (onlyFinishLastSync) {
@@ -226,7 +244,13 @@ export default class Synchronizer {
 		await this.loadFilesToBeSynchronizedToDatabase();
 		const filesInSync =
 			await this.fileSyncRepository.getFilesInSynchronization();
-		for (const file of filesInSync) {
+		for (let i = 0; i < filesInSync.length; i++) {
+			const file = filesInSync[i];
+			this.triggerProgressListeners({
+				msg: `Synchronizing ${file.path}`,
+				current: i + 1,
+				total: filesInSync.length,
+			});
 			await this.syncFile(file.path);
 		}
 	}
