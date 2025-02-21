@@ -1,7 +1,8 @@
 import { S3SyncPluginSettings } from "main";
 import S3Helper from "./S3Helper";
-import { FileSyncInfo, FileSyncType, IFileSystemAdapter, SyncProgressState } from "./types";
+import { FileSyncInfo, FileSyncModel, FileSyncType, IFileSystemAdapter, SyncProgressState } from "./types";
 import FileSyncRepository from "./FileSyncRepository";
+import { sha256 } from "./utils";
 
 export class ConflictError extends Error {
 	conflict: FileSyncInfo;
@@ -104,7 +105,7 @@ export default class Synchronizer {
 		const buffer = await this.s3.downloadObject(
 			fileInfo.remoteFile.path
 		);
-		await this.fileSystem.writeBinary(fileInfo.remoteFile.path, buffer);
+		await this.fileSystem.writeBinary(fileInfo.remoteFile.path, buffer, { mtime: fileInfo.remoteFile.mtime });
 		await this.fileSyncRepository.upsert({
 			...fileInfo.remoteFile,
 			type: FileSyncType.LastSyncedFile
@@ -157,6 +158,23 @@ export default class Synchronizer {
 		}
 	}
 
+	// TODO: Do we need this? Ever?
+	async areFilesDifferent(localFile: FileSyncModel, remoteFile: FileSyncModel) {
+		if (localFile.size !== remoteFile.size) {
+			return true;
+		}
+		const localBuffer = await this.fileSystem.readBinary(
+			localFile.path
+		);
+		const remoteBuffer = await this.s3.downloadObject(
+			remoteFile.path
+		);
+		if (sha256(localBuffer) !== sha256(remoteBuffer)) {
+			return true;
+		}
+		return false;
+	}
+
 	async syncFile(filePath: string) {
 		const fileInfo = await this.fileSyncRepository.getFileSyncInfo(
 			filePath
@@ -166,25 +184,20 @@ export default class Synchronizer {
 		}
 
 		if (fileInfo.localFile && !fileInfo.remoteFile) {
-			if (
-				fileInfo.lastSyncedFile?.mtime ===
-				fileInfo.localFile.mtime
-			) {
+			if (fileInfo.lastSyncedFile?.mtime === fileInfo.localFile.mtime) {
 				await this.removeLocalFile(fileInfo.localFile.path);
 			} else {
 				await this.syncToBucket(fileInfo);
 			}
 		} else if (!fileInfo.localFile && fileInfo.remoteFile) {
-			if (
-				fileInfo.lastSyncedFile?.mtime ===
-				fileInfo.remoteFile.mtime
-			) {
+			if (fileInfo.lastSyncedFile?.mtime === fileInfo.remoteFile.mtime) {
 				await this.removeRemoteFile(fileInfo.remoteFile.path);
 			} else {
 				await this.syncToLocal(fileInfo);
 			}
 		} else if (fileInfo.localFile && fileInfo.remoteFile) {
 			await this.solveFileConflict(fileInfo);
+
 		}
 		await this.fileSyncRepository.markSynchronizationComplete(filePath);
 	}
@@ -227,10 +240,10 @@ export default class Synchronizer {
 		// Ensure last synchronization was completed
 		const existingFilesNeedingSync =
 			await this.fileSyncRepository.getFilesInSynchronization();
-		for (let i = 0; i < existingFilesNeedingSync.length - 1; i++) {
+		for (let i = 0; i < existingFilesNeedingSync.length; i++) {
 			const file = existingFilesNeedingSync[i];
 			this.triggerProgressListeners({
-				msg: `Synchronizing ${file.path}`,
+				msg: `Finishing last synchronization`,
 				current: i + 1,
 				total: existingFilesNeedingSync.length,
 			});
@@ -247,7 +260,7 @@ export default class Synchronizer {
 		for (let i = 0; i < filesInSync.length; i++) {
 			const file = filesInSync[i];
 			this.triggerProgressListeners({
-				msg: `Synchronizing ${file.path}`,
+				msg: `Synchronizing`,
 				current: i + 1,
 				total: filesInSync.length,
 			});

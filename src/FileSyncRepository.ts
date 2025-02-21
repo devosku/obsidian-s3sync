@@ -105,12 +105,18 @@ export default class FileSyncRepository {
 	}
 
 	async getFilesInSynchronization() {
-		return this.db.fileSync
+		const fileMap = new Map<string, FileSyncModel>();
+		await this.db.fileSync
+			.orderBy("path")
 			.filter(
 				(fileSync) =>
 					fileSync.type === FileSyncType.LocalFile ||
 					fileSync.type === FileSyncType.RemoteFile
 			)
-			.toArray();
+			.each((fileSync) => {
+				fileMap.set(fileSync.path, fileSync);
+			});
+
+		return Array.from(fileMap.values());
 	}
 }
