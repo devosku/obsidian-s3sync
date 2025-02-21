@@ -105,7 +105,7 @@ export default class Synchronizer {
 		const buffer = await this.s3.downloadObject(
 			fileInfo.remoteFile.path
 		);
-		await this.fileSystem.writeBinary(fileInfo.remoteFile.path, buffer);
+		await this.fileSystem.writeBinary(fileInfo.remoteFile.path, buffer, { mtime: fileInfo.remoteFile.mtime });
 		await this.fileSyncRepository.upsert({
 			...fileInfo.remoteFile,
 			type: FileSyncType.LastSyncedFile
@@ -158,6 +158,7 @@ export default class Synchronizer {
 		}
 	}
 
+	// TODO: Do we need this? Ever?
 	async areFilesDifferent(localFile: FileSyncModel, remoteFile: FileSyncModel) {
 		if (localFile.size !== remoteFile.size) {
 			return true;
@@ -195,17 +196,7 @@ export default class Synchronizer {
 				await this.syncToLocal(fileInfo);
 			}
 		} else if (fileInfo.localFile && fileInfo.remoteFile) {
-			const filesDiffer = await this.areFilesDifferent(fileInfo.localFile, fileInfo.remoteFile);
-			
-			if (filesDiffer) {
-				await this.solveFileConflict(fileInfo);
-			} else {
-				// TODO: Must handle this somehow so we dont have to download the
-				// remote file and compare sha256 every time we sync
-				console.log(fileInfo.localFile.path);
-				console.log("localTime " + fileInfo.localFile.mtime);
-				console.log("remoteTime " + fileInfo.remoteFile.mtime);
-			}
+			await this.solveFileConflict(fileInfo);
 
 		}
 		await this.fileSyncRepository.markSynchronizationComplete(filePath);
@@ -249,7 +240,7 @@ export default class Synchronizer {
 		// Ensure last synchronization was completed
 		const existingFilesNeedingSync =
 			await this.fileSyncRepository.getFilesInSynchronization();
-		for (let i = 0; i < existingFilesNeedingSync.length - 1; i++) {
+		for (let i = 0; i < existingFilesNeedingSync.length; i++) {
 			const file = existingFilesNeedingSync[i];
 			this.triggerProgressListeners({
 				msg: `Finishing last synchronization`,

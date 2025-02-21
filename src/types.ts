@@ -1,3 +1,5 @@
+import { DataWriteOptions } from "obsidian";
+
 export enum FileSyncType {
 	LastSyncedFile = 0,
 	RemoteFile = 1,
@@ -72,7 +74,11 @@ export interface IFileSystemAdapter {
 	getFiles(): Omit<FileSyncModel, "id">[];
 	getFilesMap(): Record<string, Omit<FileSyncModel, "id">>;
 	readBinary(path: string): Promise<ArrayBuffer>;
-	writeBinary(path: string, data: ArrayBuffer): Promise<void>;
+	writeBinary(
+		path: string,
+		data: ArrayBuffer,
+		options?: DataWriteOptions
+	): Promise<void>;
 	delete(path: string): Promise<void>;
 }
 

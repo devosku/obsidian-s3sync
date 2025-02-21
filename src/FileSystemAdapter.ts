@@ -1,4 +1,4 @@
-import { App } from "obsidian";
+import { App, DataWriteOptions } from "obsidian";
 import { FileSyncModel, FileSyncType } from "./types";
 
 export default class FileSystemAdapter {
@@ -50,9 +50,9 @@ export default class FileSystemAdapter {
         }
     }
 
-    async writeBinary(path: string, data: ArrayBuffer) {
+    async writeBinary(path: string, data: ArrayBuffer, options?: DataWriteOptions) {
         await this.ensureFoldersExists(path);
-        return this.app.vault.adapter.writeBinary(path, data);
+        return this.app.vault.adapter.writeBinary(path, data, options);
     }
 
     async delete(path: string) {

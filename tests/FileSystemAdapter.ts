@@ -1,7 +1,7 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "fs";
 import { FileSyncModel, FileSyncType } from "../src/types";
 import { dirname, join, relative } from "path";
-import { App } from "obsidian";
+import { App, DataWriteOptions } from "obsidian";
 
 export default class FileSystemAdapter {
     private app: App;
@@ -55,11 +55,17 @@ export default class FileSystemAdapter {
         return uint8Array.buffer;
     }
 
-    async writeBinary(path: string, data: ArrayBuffer) {
+    async writeBinary(path: string, data: ArrayBuffer, options?: DataWriteOptions) {
         const absolutePath = join(this.vaultPath, path);
         mkdirSync(dirname(absolutePath), { recursive: true });
         const uint8Array = new Uint8Array(data);
         writeFileSync(absolutePath, uint8Array);
+        if (options?.mtime) {
+            // we actually cant change the ctime of a file in nodejs so we just ignore it
+            // the sync is based on mtime so it should be fine (tm)
+            utimesSync(absolutePath, options.mtime, options.mtime);
+        }
+        
     }
 
     async delete(path: string) {
