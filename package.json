@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-s3-sync",
-	"version": "0.0.1",
+	"version": "0.0.2",
 	"description": "Obsidian plugin for synchronizing to Amazon S3",
 	"main": "main.js",
 	"scripts": {
