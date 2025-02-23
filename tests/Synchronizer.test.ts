@@ -20,9 +20,9 @@ import FileSystemAdapter from "./FileSystemAdapter";
 import FileSyncRepository from "../src/FileSyncRepository";
 import S3Helper from "../src/S3Helper";
 
-function getSynchronizer(vaultPath: string) {
+async function getSynchronizer(vaultPath: string) {
 	const fileSystem = new FileSystemAdapter(vaultPath);
-	const fileSyncRepository = new FileSyncRepository("testdb");
+	const fileSyncRepository = await FileSyncRepository.init("testdb");
 
 	return new Synchronizer(fileSystem, fileSyncRepository, {
 		bucket: "test",
@@ -34,7 +34,7 @@ function getSynchronizer(vaultPath: string) {
 }
 
 async function wipeDatabase() {
-	const fileSyncRepository = new FileSyncRepository("testdb");
+	const fileSyncRepository = await FileSyncRepository.init("testdb");
 	await fileSyncRepository.deleteAll();
 }
 
@@ -70,7 +70,7 @@ describe("Synchronizer", () => {
 		test("Files should be synced correctly", async () => {
 			// Test that files get synced from local to bucket
 			const temporaryVaultPath = await createTempVault(10);
-			const synchronizer = getSynchronizer(temporaryVaultPath);
+			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
 			let objects = await listBucketObjects(synchronizer.s3);
 			expect(objects.length).toBe(10);
@@ -98,7 +98,7 @@ describe("Synchronizer", () => {
 
 		test("FileSync database should be cleaned after sync", async () => {
 			const temporaryVaultPath = await createTempVault(10);
-			const synchronizer = getSynchronizer(temporaryVaultPath);
+			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
 
 			const dbEntries = await synchronizer.fileSyncRepository.getAll();
@@ -107,7 +107,7 @@ describe("Synchronizer", () => {
 
 		test("File updated locally should be updated in bucket", async () => {
 			const temporaryVaultPath = await createTempVault(10);
-			const synchronizer = getSynchronizer(temporaryVaultPath);
+			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
 
 			const files = synchronizer.fileSystem.getFiles();
@@ -126,7 +126,7 @@ describe("Synchronizer", () => {
 
 		test("File updated in bucket should be updated locally", async () => {
 			const temporaryVaultPath = await createTempVault(10);
-			const synchronizer = getSynchronizer(temporaryVaultPath);
+			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
 			const files = synchronizer.fileSystem.getFiles();
 			const updatedFile = files[0];
@@ -151,7 +151,7 @@ describe("Synchronizer", () => {
 
 		test("Should throw ConflictError when file is updated both locally and in bucket but have same mtime", async () => {
 			const temporaryVaultPath = await createTempVault(2);
-			const synchronizer = getSynchronizer(temporaryVaultPath);
+			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
 			const files = synchronizer.fileSystem.getFiles();
 			const updatedFile = files[0];
@@ -190,7 +190,7 @@ describe("Synchronizer", () => {
 
 		test("File updated locally and in bucket should be updated both ways", async () => {
 			const temporaryVaultPath = await createTempVault(2);
-			const synchronizer = getSynchronizer(temporaryVaultPath);
+			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
 			const files = synchronizer.fileSystem.getFiles();
 			const updatedFile1 = files[0];
@@ -296,7 +296,7 @@ describe("Synchronizer", () => {
 
 		test("File deleted locally should be deleted from bucket", async () => {
 			const temporaryVaultPath = await createTempVault(10);
-			const synchronizer = getSynchronizer(temporaryVaultPath);
+			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
 			const files = synchronizer.fileSystem.getFiles();
 			const fileToDelete = files[0].path;
@@ -311,7 +311,7 @@ describe("Synchronizer", () => {
 			// When there is no change since last sync in the local file we
 			// should delete it.
 			const temporaryVaultPath = await createTempVault(10);
-			const synchronizer = getSynchronizer(temporaryVaultPath);
+			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
 			const objects = await listBucketObjects(synchronizer.s3);
 			const objectToDelete = objects[0];
@@ -323,7 +323,7 @@ describe("Synchronizer", () => {
 
 		test("File deleted from bucket should not be deleted locally when it has changed", async () => {
 			const temporaryVaultPath = await createTempVault(10);
-			const synchronizer = getSynchronizer(temporaryVaultPath);
+			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
 			const objects = await listBucketObjects(synchronizer.s3);
 			const objectToDelete = objects[0];
@@ -337,7 +337,7 @@ describe("Synchronizer", () => {
 
 		test("File deleted locally should not be deleted from bucket when it has changed", async () => {
 			const temporaryVaultPath = await createTempVault(10);
-			const synchronizer = getSynchronizer(temporaryVaultPath);
+			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
 			let files = synchronizer.fileSystem.getFiles();
 			const updatedFile = files[0];

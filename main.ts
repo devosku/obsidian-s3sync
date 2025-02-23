@@ -23,13 +23,14 @@ const DEFAULT_SETTINGS: S3SyncPluginSettings = {
 };
 
 export default class S3SyncPlugin extends Plugin {
-	settings: S3SyncPluginSettings;
-	dbPath: string;
-	pluginDir: string;
-	vaultDir: string;
+	private settings: S3SyncPluginSettings;
+	private fileSyncRepository: FileSyncRepository;
 
 	async onload() {
 		await this.loadSettings();
+		// @ts-ignore not documented anywhere but app.appId is what Obsidian
+		// uses to store data in indexeddb for different vaults
+		this.fileSyncRepository = await FileSyncRepository.init(this.app.appId + "-s3sync");
 
 		this.addRibbonIcon("cloud-upload", "S3 Sync", async () => {
 			await this.doFullSync();
@@ -44,6 +45,12 @@ export default class S3SyncPlugin extends Plugin {
 		});
 
 		this.addSettingTab(new SettingTab(this.app, this));
+	}
+
+	onunload() {
+		if (this.fileSyncRepository) {
+			this.fileSyncRepository.close();
+		}
 	}
 
 	async loadSettings() {
@@ -61,9 +68,7 @@ export default class S3SyncPlugin extends Plugin {
 	createSynchronizer() {
 		return new Synchronizer(
 			new FileSystemAdapter(this.app),
-			// @ts-ignore not documented anywhere but app.appId is what Obsidian
-			// uses to store data in indexeddb for different vaults
-			new FileSyncRepository(this.app.appId + "-s3sync"),
+			this.fileSyncRepository,
 			this.settings
 		);
 	}
