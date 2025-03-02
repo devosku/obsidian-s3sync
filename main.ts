@@ -13,6 +13,7 @@ export interface S3SyncPluginSettings {
 	accessKeyId: string;
 	secretAccessKey: string;
 	endpoint?: string;
+	syncSettings: boolean
 }
 
 const DEFAULT_SETTINGS: S3SyncPluginSettings = {
@@ -20,6 +21,7 @@ const DEFAULT_SETTINGS: S3SyncPluginSettings = {
 	region: "",
 	accessKeyId: "",
 	secretAccessKey: "",
+	syncSettings: false
 };
 
 export default class S3SyncPlugin extends Plugin {

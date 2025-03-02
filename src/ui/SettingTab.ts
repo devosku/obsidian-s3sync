@@ -16,6 +16,17 @@ export default class SettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
+			.setName("Synchronize settings and extensions")
+			.setDesc("When enabled, the plugin will synchronize the .obsidian directory with the S3 bucket")
+			.addToggle((toggle) => {
+				toggle.setValue(this.plugin.settings.syncSettings);
+				toggle.onChange(async (value) => {
+					this.plugin.settings.syncSettings = value;
+					await this.plugin.saveSettings();
+				});
+			});
+
+		new Setting(containerEl)
 			.setName("Amazon S3 Bucket Name")
 			.setDesc("S3 Bucket to synchronize the vault with")
 			.addText((text) =>
