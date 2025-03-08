@@ -4,36 +4,51 @@ import { FileSyncModel, FileSyncType } from "./types";
 export default class FileSystemAdapter {
     private app: App;
 
+    private ignoredDirs = [
+        ".obsidian/plugins/s3sync",
+        ".obsidian/plugins/obsidian-s3sync",
+        ".git"
+    ];
+
     constructor(app: App) {
         this.app = app;
     }
 
-    getFiles() {
-        const files = this.app.vault.getFiles();
-        const fileSyncList: Omit<FileSyncModel, "id">[] = [];
-        for (const file of files) {
-            fileSyncList.push({
-                path: file.path,
-                size: file.stat.size,
-                mtime: file.stat.mtime,
+    async getFilesMap(path?: string) {
+        const filePaths = await this.getFilesRecursive(path);
+        const fileSyncList: Record<string, Omit<FileSyncModel, "id">> = {};
+        for (const filePath of filePaths) {
+            if (!path && filePath.startsWith(".obsidian")) {
+                continue;
+            }
+            const stat = await this.app.vault.adapter.stat(filePath);
+            if (!stat) {
+                continue;
+            }
+            fileSyncList[filePath] = {
+                path: filePath,
+                size: stat.size,
+                mtime: stat.mtime,
                 type: FileSyncType.LocalFile,
-            });
+            };
         }
         return fileSyncList;
     }
 
-    getFilesMap() {
-        const files = this.app.vault.getFiles();
-        const fileSyncMap: Record<string, Omit<FileSyncModel, "id">> = {};
-        for (const file of files) {
-            fileSyncMap[file.path] = {
-                path: file.path,
-                size: file.stat.size,
-                mtime: file.stat.mtime,
-                type: FileSyncType.LocalFile,
-            };
+    private isIgnoredDir(path: string) {
+        return this.ignoredDirs.some((dir) => path.includes(dir));
+    }
+
+    private async getFilesRecursive(path = "/", filePaths: string[] = []) {
+        const files = await this.app.vault.adapter.list(path);
+        filePaths.push(...files.files);
+        for (const dir of files.folders) {
+            if (this.isIgnoredDir(dir)) {
+                continue;
+            }
+            await this.getFilesRecursive(dir, filePaths);
         }
-        return fileSyncMap;
+        return filePaths;
     }
 
     async readBinary(path: string) {
@@ -45,7 +60,11 @@ export default class FileSystemAdapter {
         for (let i = 1; i < split.length; i++) {
             const folderPath = split.slice(0, i).join("/");
             if (!this.app.vault.getAbstractFileByPath(folderPath)) {
-                await this.app.vault.createFolder(folderPath);
+                try {
+                    await this.app.vault.createFolder(folderPath);
+                } catch {
+                    // Folder already exists
+                }
             }
         }
     }

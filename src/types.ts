@@ -71,8 +71,7 @@ export function isFileSyncInfo(obj: unknown): obj is FileSyncInfo {
 }
 
 export interface IFileSystemAdapter {
-	getFiles(): Omit<FileSyncModel, "id">[];
-	getFilesMap(): Record<string, Omit<FileSyncModel, "id">>;
+	getFilesMap(path?: string): Promise<Record<string, Omit<FileSyncModel, "id">>>;
 	readBinary(path: string): Promise<ArrayBuffer>;
 	writeBinary(
 		path: string,

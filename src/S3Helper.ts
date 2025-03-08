@@ -43,7 +43,7 @@ export default class S3Helper {
 		this.bucket = options.bucket;
 	}
 
-	async *listObjects() {
+	async *listObjects(path?: string) {
 		let continuationToken: string | undefined;
 		do {
 			const { Contents, NextContinuationToken } = await this.client.send(
@@ -57,7 +57,12 @@ export default class S3Helper {
 				for (const item of Contents) {
 					if (!item.Key || item.Key.endsWith("/")) {
 						continue;
+					} else if (path && !item.Key.startsWith(path)) {
+						continue;
+					} else if (!path && item.Key.startsWith(".obsidian")) {
+						continue;
 					}
+
 					const head = await this.client.send(
 						new HeadObjectCommand({
 							Bucket: this.bucket,

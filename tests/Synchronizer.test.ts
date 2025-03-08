@@ -65,6 +65,11 @@ async function listBucketObjects(s3: S3Helper) {
 	return objects;
 }
 
+async function getFiles(synchronizer: Synchronizer) {
+	const filesMap = await synchronizer.fileSystem.getFilesMap();
+	return Object.values(filesMap).map((file) => file);
+}
+
 describe("Synchronizer", () => {
 	describe("startSync", () => {
 		test("Files should be synced correctly", async () => {
@@ -79,7 +84,7 @@ describe("Synchronizer", () => {
 			deleteVaultFiles(temporaryVaultPath);
 			await wipeDatabase();
 			await synchronizer.startSync();
-			const files = synchronizer.fileSystem.getFiles();
+			const files = await getFiles(synchronizer);
 			expect(files.length).toBe(10);
 
 			// Test that files get synced both ways
@@ -90,7 +95,7 @@ describe("Synchronizer", () => {
 				"This is a test file"
 			);
 			await synchronizer.startSync();
-			const filesAfterSync = synchronizer.fileSystem.getFiles();
+			const filesAfterSync = await getFiles(synchronizer);
 			expect(filesAfterSync.length).toBe(11);
 			objects = await listBucketObjects(synchronizer.s3);
 			expect(objects.length).toBe(11);
@@ -110,7 +115,7 @@ describe("Synchronizer", () => {
 			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
 
-			const files = synchronizer.fileSystem.getFiles();
+			const files = await getFiles(synchronizer);
 			const updatedFile = files[0];
 			const filePath = join(temporaryVaultPath, updatedFile.path);
 			const content = "This is a new content";
@@ -128,7 +133,7 @@ describe("Synchronizer", () => {
 			const temporaryVaultPath = await createTempVault(10);
 			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
-			const files = synchronizer.fileSystem.getFiles();
+			const files = await getFiles(synchronizer);
 			const updatedFile = files[0];
 
 			const tmpFiles = await mkdtemp(
@@ -153,7 +158,7 @@ describe("Synchronizer", () => {
 			const temporaryVaultPath = await createTempVault(2);
 			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
-			const files = synchronizer.fileSystem.getFiles();
+			const files = await getFiles(synchronizer);
 			const updatedFile = files[0];
 			const localFileContent = "This is the local file content";
 			await synchronizer.fileSystem.writeBinary(
@@ -192,7 +197,7 @@ describe("Synchronizer", () => {
 			const temporaryVaultPath = await createTempVault(2);
 			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
-			const files = synchronizer.fileSystem.getFiles();
+			const files = await getFiles(synchronizer);
 			const updatedFile1 = files[0];
 			const updatedFile2 = files[1];
 			const localFileContent = "This is the local file content";
@@ -298,7 +303,7 @@ describe("Synchronizer", () => {
 			const temporaryVaultPath = await createTempVault(10);
 			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
-			const files = synchronizer.fileSystem.getFiles();
+			const files = await getFiles(synchronizer);
 			const fileToDelete = files[0].path;
 			rmSync(join(temporaryVaultPath, fileToDelete));
 			await synchronizer.startSync();
@@ -317,7 +322,7 @@ describe("Synchronizer", () => {
 			const objectToDelete = objects[0];
 			await synchronizer.s3.deleteObject(objectToDelete.path);
 			await synchronizer.startSync();
-			const files = synchronizer.fileSystem.getFiles();
+			const files = await getFiles(synchronizer);
 			expect(files.length).toBe(9);
 		});
 
@@ -331,7 +336,7 @@ describe("Synchronizer", () => {
 			const filePath = join(temporaryVaultPath, objectToDelete.path);
 			await writeFile(filePath, "This is a new content");
 			await synchronizer.startSync();
-			const files = synchronizer.fileSystem.getFiles();
+			const files = await getFiles(synchronizer);
 			expect(files.length).toBe(10);
 		});
 
@@ -339,7 +344,7 @@ describe("Synchronizer", () => {
 			const temporaryVaultPath = await createTempVault(10);
 			const synchronizer = await getSynchronizer(temporaryVaultPath);
 			await synchronizer.startSync();
-			let files = synchronizer.fileSystem.getFiles();
+			let files = await getFiles(synchronizer);
 			const updatedFile = files[0];
 			const filePath = join(temporaryVaultPath, updatedFile.path);
 			await writeFile(filePath, "This is a new content");
@@ -349,7 +354,7 @@ describe("Synchronizer", () => {
 			});
 			rmSync(filePath);
 			await synchronizer.startSync();
-			files = synchronizer.fileSystem.getFiles();
+			files = await getFiles(synchronizer);
 			expect(files.length).toBe(10);
 		});
 	});

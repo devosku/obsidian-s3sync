@@ -47,6 +47,7 @@ export default class FileSyncRepository {
 		const tx = this.db.transaction(this.storeName, "readwrite");
 		const store = tx.objectStore(this.storeName);
 		const index = store.index("path_type");
+		console.log("upsert", fileSync);
 
 		const existingKey = await index.getKey([fileSync.path, fileSync.type]);
 

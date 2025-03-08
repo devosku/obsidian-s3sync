@@ -23,7 +23,7 @@ const DEFAULT_SETTINGS: S3SyncPluginSettings = {
 };
 
 export default class S3SyncPlugin extends Plugin {
-	private settings: S3SyncPluginSettings;
+	settings: S3SyncPluginSettings;
 	private fileSyncRepository: FileSyncRepository;
 
 	async onload() {

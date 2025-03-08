@@ -42,7 +42,13 @@ export default class Synchronizer {
 		settings: S3SyncPluginSettings
 	) {
 		validateSettings(settings);
-		this.s3 = new S3Helper({ ...settings });
+		this.s3 = new S3Helper({ 
+			bucket: settings.bucket,
+			region: settings.region,
+			accessKeyId: settings.accessKeyId,
+			secretAccessKey: settings.secretAccessKey,
+			endpoint: settings.endpoint,
+		});
 		this.fileSystem = fileSystem;
 		this.fileSyncRepository = fileSyncRepository;
 	}
@@ -51,21 +57,22 @@ export default class Synchronizer {
 		this.progressListeners.push(listener);
 	}
 
-	async loadFilesToBeSynchronizedToDatabase() {
-		const localFilesMap = await this.fileSystem.getFilesMap();
-		for await (const object of this.s3.listObjects()) {
-			if (localFilesMap[object.path]) {
-				const localFile = localFilesMap[object.path];
+	async loadFilesToBeSynchronizedToDatabase(path?: string) {
+		const localFilesMap = await this.fileSystem.getFilesMap(path);
+
+		for await (const remoteFile of this.s3.listObjects(path)) {
+			if (localFilesMap[remoteFile.path]) {
+				const localFile = localFilesMap[remoteFile.path];
 				if (
-					localFile.mtime === object.mtime &&
-					localFile.size === object.size
+					localFile.mtime === remoteFile.mtime &&
+					localFile.size === remoteFile.size
 				) {
-					delete localFilesMap[object.path];
+					delete localFilesMap[remoteFile.path];
 					continue;
 				}
 			}
 			await this.fileSyncRepository.upsert({
-				...object,
+				...remoteFile,
 				type: FileSyncType.RemoteFile,
 			});
 		}
@@ -236,8 +243,7 @@ export default class Synchronizer {
 	/**
 	 * Synchronize local files with S3 bucket.
 	 */
-	async startSync(onlyFinishLastSync = false) {
-		// Ensure last synchronization was completed
+	async startSync(onlyFinishLastSync = false, path?: string) {
 		const existingFilesNeedingSync =
 			await this.fileSyncRepository.getFilesInSynchronization();
 		for (let i = 0; i < existingFilesNeedingSync.length; i++) {
@@ -250,11 +256,12 @@ export default class Synchronizer {
 
 			await this.syncFile(file.path);
 		}
+
 		if (onlyFinishLastSync) {
 			return;
 		}
-		// Load files to be synchronized to database and synchronize them
-		await this.loadFilesToBeSynchronizedToDatabase();
+
+		await this.loadFilesToBeSynchronizedToDatabase(path);
 		const filesInSync =
 			await this.fileSyncRepository.getFilesInSynchronization();
 		for (let i = 0; i < filesInSync.length; i++) {

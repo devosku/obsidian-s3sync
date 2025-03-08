@@ -1,10 +1,9 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "fs";
 import { FileSyncModel, FileSyncType } from "../src/types";
 import { dirname, join, relative } from "path";
-import { App, DataWriteOptions } from "obsidian";
+import { DataWriteOptions } from "obsidian";
 
 export default class FileSystemAdapter {
-    private app: App;
     private vaultPath: string;
 
     constructor(vaultPath: string) {
@@ -36,12 +35,8 @@ export default class FileSystemAdapter {
         return files;
 	}
 
-    getFiles() {
-        return this.getFilesRecursive(this.vaultPath);
-    }
-
-    getFilesMap() {
-        const files = this.getFiles();
+    async getFilesMap() {
+        const files = this.getFilesRecursive(this.vaultPath);
         const fileSyncMap: Record<string, Omit<FileSyncModel, "id">> = {};
         for (const file of files) {
             fileSyncMap[file.path] = file;
